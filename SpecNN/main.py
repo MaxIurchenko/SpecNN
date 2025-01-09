@@ -1,13 +1,14 @@
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, colorchooser, ttk
 import spectral
-import pandas as pd
 import numpy as np
-import cv2
+from PIL import Image, ImageTk
+# import pandas as pd
+# import cv2
 # from tensorflow.keras.models import Sequential
 # from tensorflow.keras.layers import Dense
-import matplotlib.pyplot as plt
-from PIL import Image, ImageTk
+# import matplotlib.pyplot as plt
+
 
 class App:
     def __init__(self, root):
@@ -41,10 +42,41 @@ class App:
         self.right_label.config(justify='left', background='white', width=40)
         self.right_label.grid(row=1, column=1, sticky='ns')
 
+        self.rect_table = ttk.Treeview(self.right_label, columns=("x1", "y1", "x2", "y2", "color", "data"), show="headings")
+        self.rect_table.heading("x1", text="X1")
+        self.rect_table.heading("y1", text="Y1")
+        self.rect_table.heading("x2", text="X2")
+        self.rect_table.heading("y2", text="Y2")
+        self.rect_table.heading("color", text="Color")
+        self.rect_table.heading("data", text="Data")
+        self.rect_table.column("x1", width=50)
+        self.rect_table.column("y1", width=50)
+        self.rect_table.column("x2", width=50)
+        self.rect_table.column("y2", width=50)
+        self.rect_table.column("color", width=50)
+        self.rect_table.column("data", width=40)
+        self.rect_table.grid(row=0, column=0, sticky='nw')
+
+        # Buttons for table actions
+        self.delete_button = tk.Button(self.right_label, text="Delete Selected", command=self.delete_rectangle)
+        self.delete_button.grid(row=1, column=0, sticky="nwe")
+
+        # self.edit_button = tk.Button(self.right_label, text="Edit Selected", command=self.edit_rectangle)
+        # self.edit_button.pack(fill=tk.X)
+
         # Variables
         self.spec_image = None
         self.spec_image_info = None
         self.rgb_image = None  # Initialize here to avoid AttributeError
+        self.start_x = None
+        self.start_y = None
+        self.rectangles = []  # Stores rectangles as (x1, y1, x2, y2, color)
+        self.current_rectangle = None
+
+        # Rectangle
+        self.label_image.bind("<ButtonPress-1>", self.start_draw)
+        self.label_image.bind("<B1-Motion>", self.draw_rectangle)
+        self.label_image.bind("<ButtonRelease-1>", self.complete_rectangle)
 
     def open_file(self):
         """Handles file opening logic."""
@@ -90,7 +122,9 @@ class App:
             self.display_image()
 
     def display_image(self):
-        # Resize and display the image
+        """Resize and display the image with scaled rectangles."""
+        if self.rgb_image is None:
+            return
 
         pil_image = Image.fromarray(self.rgb_image)
 
@@ -110,9 +144,98 @@ class App:
             new_height = canvas_height
             new_width = int(new_height * aspect_ratio)
 
+        # Save the scale factors
+        self.scale_x = new_width / img_width
+        self.scale_y = new_height / img_height
+
         resized_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         self.tk_image = ImageTk.PhotoImage(resized_image)
+        self.label_image.delete("all")  # Clear canvas before drawing new image
         self.label_image.create_image(0, 0, anchor="nw", image=self.tk_image)
+
+        # Redraw rectangles with new coordinates
+        for orig_x1, orig_y1, orig_x2, orig_y2, color in self.rectangles:
+            scaled_x1 = orig_x1 * self.scale_x
+            scaled_y1 = orig_y1 * self.scale_y
+            scaled_x2 = orig_x2 * self.scale_x
+            scaled_y2 = orig_y2 * self.scale_y
+            self.label_image.create_rectangle(scaled_x1, scaled_y1, scaled_x2, scaled_y2, outline=color, width=2)
+
+    def start_draw(self, event):
+        """Start drawing a rectangle."""
+        self.start_x = event.x
+        self.start_y = event.y
+        self.current_rectangle = self.label_image.create_rectangle(self.start_x, self.start_y, event.x, event.y,
+                                                                   outline="red", width=2)
+
+    def draw_rectangle(self, event):
+        """Update the rectangle as the user drags the mouse."""
+        if self.current_rectangle:
+            self.label_image.coords(self.current_rectangle, self.start_x, self.start_y, event.x, event.y)
+
+    def complete_rectangle(self, event):
+        """Complete the rectangle and allow the user to choose a color."""
+        if self.current_rectangle:
+            x1, y1, x2, y2 = self.label_image.coords(self.current_rectangle)
+
+            # Convert canvas coordinates to original image coordinates
+            orig_x1 = x1 / self.scale_x
+            orig_y1 = y1 / self.scale_y
+            orig_x2 = x2 / self.scale_x
+            orig_y2 = y2 / self.scale_y
+
+            color = self.choose_color()
+            if color:
+                self.label_image.itemconfig(self.current_rectangle, outline=color)
+                self.rectangles.append((orig_x1, orig_y1, orig_x2, orig_y2, color))  # Store in original space
+                self.rect_table.insert("", "end", values=(orig_x1, orig_y1, orig_x2, orig_y2, color))
+            else:
+                self.label_image.delete(self.current_rectangle)
+            self.current_rectangle = None
+
+    def choose_color(self):
+        """Allow the user to choose a color for the rectangle."""
+        color = colorchooser.askcolor(title="Choose Rectangle Color")[1]
+        return color
+
+    def delete_rectangle(self):
+        """Delete the selected rectangle from the canvas and table."""
+        selected_item = self.rect_table.selection()
+        if selected_item:
+            item = selected_item[0]  # Get the selected item in the table
+            index = self.rect_table.index(item)  # Get the index of the selected item
+            self.rect_table.delete(item)  # Remove the item from the table
+
+            # Remove the corresponding rectangle from the canvas
+            rect_to_delete = self.rectangles.pop(index)  # Remove from the rectangles list
+            x1, y1, x2, y2, color = rect_to_delete
+            for rect_id in self.label_image.find_all():  # Find all items on the canvas
+                coords = self.label_image.coords(rect_id)  # Get the coordinates of the item
+                if coords == [x1, y1, x2, y2]:  # Match coordinates
+                    self.label_image.delete(rect_id)  # Delete the canvas rectangle
+                    break
+
+    def edit_rectangle(self):
+        """Edit the color of the selected rectangle."""
+        selected_item = self.rect_table.selection()
+        if selected_item:
+            item = selected_item[0]  # Get the selected item in the table
+            index = self.rect_table.index(item)  # Get the index of the selected item
+            new_color = self.choose_color()  # Let the user choose a new color
+
+            if new_color:
+                x1, y1, x2, y2, _ = self.rectangles[index]  # Get the rectangle data
+                self.rectangles[index] = (x1, y1, x2, y2, new_color)  # Update the list
+
+                # Update the table entry
+                self.rect_table.item(item, values=(x1, y1, x2, y2, new_color))
+
+                # Update the canvas rectangle color
+                for rect_id in self.label_image.find_all():  # Find all items on the canvas
+                    coords = self.label_image.coords(rect_id)  # Get the coordinates of the item
+                    if coords == [x1, y1, x2, y2]:  # Match coordinates
+                        self.label_image.itemconfig(rect_id, outline=new_color)  # Change the outline color
+                        break
 
     def on_resize(self, event):
         """Handle canvas resize events."""
