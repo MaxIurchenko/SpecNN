@@ -1,10 +1,14 @@
 import tkinter as tk
 from tkinter import filedialog, colorchooser, ttk
+# from unittest.mock import right
+
 import spectral
 import numpy as np
 from PIL import Image, ImageTk, ImageGrab
 # import pandas as pd
 # import cv2
+# import tensorflow as tf
+# from tensorflow.keras import layers, models
 # from tensorflow.keras.models import Sequential
 # from tensorflow.keras.layers import Dense
 # import matplotlib.pyplot as plt
@@ -76,8 +80,28 @@ class App:
         self.delete_button = tk.Button(self.right_label, text="Save train data to file", command=self.save_train_data_to_file)
         self.delete_button.grid(row=3, column=0, sticky="nwe")
 
+        # Button load preparing data to file
+        self.delete_button = tk.Button(self.right_label, text="Load train data", command=self.load_train_data)
+        self.delete_button.grid(row=4, column=0, sticky="nwe")
+
+        # Button clear preparing data to file
+        self.delete_button = tk.Button(self.right_label, text="Clear train data", command=self.clear_train_data)
+        self.delete_button.grid(row=5, column=0, sticky="nwe")
+
         # self.edit_button = tk.Button(self.right_label, text="Edit Selected", command=self.edit_rectangle)
         # self.edit_button.pack(fill=tk.X)
+
+        # Label to display train_x and train_y shapes
+        self.train_shape_label = tk.Label(self.right_label, text="train_x: N/A, train_y: N/A", font=("Arial", 12))
+        self.train_shape_label.grid(row=6, column=0, sticky="nwe")
+
+        #-------------------------------Neural Networks----------------------------------------
+        self.nn_combobox = ttk.Combobox(self.right_label, values=["Simple MLP", "CNN", "RNN"], font=("Arial", 12), state='readonly')
+        self.nn_combobox.grid(row=7, column=0, sticky="nwe")
+        self.nn_combobox.bind("<<ComboboxSelected>>", self.nn_combobox_selected)
+
+        self.nn_parameters = tk.Label(self.right_label)
+        self.nn_parameters.grid(row=8, column=0, sticky="nwe")
 
         # Variables
         self.spec_image = None
@@ -444,7 +468,13 @@ class App:
         entry.bind("<Return>", save_edit)
         entry.bind("<FocusOut>", save_edit)
 
-    import numpy as np
+    def update_shape_label(self):
+        """Update the label displaying the shapes of train_x and train_y."""
+        if self.train_x is not None and self.train_y is not None:
+            text = f"train_x: {self.train_x.shape}, train_y: {self.train_y.shape}"
+        else:
+            text = "train_x: N/A, train_y: N/A"
+        self.train_shape_label.config(text=text)
 
     def save_train_data(self):
         """Generate training data from the rectangles and spec_image."""
@@ -475,6 +505,8 @@ class App:
         self.train_x = np.vstack(self.train_x)  # Stack the individual arrays vertically
         self.train_y = np.concatenate(self.train_y)  # Concatenate all labels
 
+        self.update_shape_label()
+
         # Check the shape of the resulting arrays
         print(f"Training data generated: {self.train_x.shape}, {self.train_y.shape}")
         print(self.train_x[0], self.train_y)
@@ -486,9 +518,169 @@ class App:
             return
 
         # Save train_x and train_y to a .npz file
-        np.savez("train_data.npz", train_x=self.train_x, train_y=self.train_y)
-        print("Training data saved to 'train_data.npz'")
+        file_path = filedialog.asksaveasfilename(
+            title='Save File',
+            filetypes=(("Numpy Spectra File", "*.npz"), ("All files", "*.*")),
+            defaultextension=".npz"
+        )
 
+        if file_path:  # Ensure the user didn't cancel the save dialog
+            np.savez(file_path, train_x=self.train_x, train_y=self.train_y)
+            print(f"Training data saved to '{file_path}'")
+        else:
+            print("Save operation was canceled.")
+
+    def load_train_data(self):
+        """Load training data from a .npz file."""
+        # Open a file dialog for the user to select the file
+        file_path = filedialog.askopenfilename(
+            title='Select Training Data File',
+            filetypes=(("NPZ Files", "*.npz"), ("All Files", "*.*"))
+        )
+
+        # Check if a file was selected
+        if not file_path:
+            print("No file selected.")
+            return
+
+        try:
+            # Load the .npz file
+            data = np.load(file_path)
+
+            # Extract train_x and train_y from the file
+            train_x = data['train_x']
+            train_y = data['train_y']
+
+            # If self.train_x exists, append; otherwise, initialize
+            if hasattr(self, 'train_x') and hasattr(self, 'train_y'):
+                self.train_x = np.vstack((self.train_x, train_x))
+                self.train_y = np.hstack((self.train_y, train_y))
+            else:
+                self.train_x = train_x
+                self.train_y = train_y
+
+            self.update_shape_label()
+
+            print("Training data loaded successfully.")
+            print(f"train_x shape: {self.train_x.shape}, train_y shape: {self.train_y.shape}")
+
+        except Exception as e:
+            print(f"Error loading training data: {e}")
+
+    def clear_train_data(self):
+        """Clear the training data."""
+        if hasattr(self, 'train_x') or hasattr(self, 'train_y'):
+            self.train_x = None
+            self.train_y = None
+            print("Training data has been cleared.")
+        else:
+            print("No training data to clear.")
+        self.update_shape_label()
+
+#----------------------NeuralNetworks------------------------------------
+    def nn_combobox_selected(self, event):
+        """Callback for when a neural network type is selected."""
+        selection = self.nn_combobox.get()
+
+        if selection == "Simple MLP":
+            model = self.create_simple_mlp_parameters()
+        elif selection == "CNN":
+            model = self.create_cnn(input_shape=(32, 32, 3), num_classes=10)
+        elif selection == "RNN":
+            model = self.create_rnn(input_shape=(100, 1), num_classes=10)
+        else:
+            self.summary_label.insert("1.0", "Invalid selection.\n")
+            return
+
+    def create_simple_mlp_parameters(self):
+        # Create table headers
+        headers = ["Layer", "Configuration"]
+        for col, header in enumerate(headers):
+            label = tk.Label(self.right_label, text=header, font=("Arial", 12, "bold"), bg="lightgray")
+            label.grid(row=9, column=col, sticky="nsew", padx=2, pady=2)
+
+        unique_values, self.counts = np.unique(self.train_y, return_counts=True)
+
+        # Create the table rows
+        self.create_table_row(10, "Input shape", f"{self.train_y.shape}", readonly=True)
+        self.first_hidden_layer = self.create_table_row(11, "First Hidden Layer", "", input_type="int")
+        self.second_hidden_layer = self.create_table_row(12, "Second Hidden Layer", "", input_type="int")
+        self.output_layer = self.create_table_row(13, "Output Layer", f"{self.counts}", readonly=True)
+
+        # Add a button to print the configuration
+        submit_btn = tk.Button(self.right_label, text="Submit", command=self.print_configuration, font=("Arial", 12))
+        submit_btn.grid(row=14, column=0, columnspan=2, pady=10)
+
+    def create_table_row(self, row, label_text, default_value, input_type=None, readonly=False):
+        """Helper function to create a row in the table."""
+        label = tk.Label(self.right_label, text=label_text, font=("Arial", 12))
+        label.grid(row=row, column=0, sticky="w", padx=5, pady=5)
+
+        if readonly:
+            # Create a label for readonly fields
+            entry = tk.Label(self.right_label, text=default_value, font=("Arial", 12), bg="white", relief="solid")
+            entry.grid(row=row, column=1, sticky="nsew", padx=5, pady=5)
+        else:
+            # Create an entry for user input
+            entry = ttk.Entry(self.right_label, font=("Arial", 12))
+            entry.grid(row=row, column=1, sticky="nsew", padx=5, pady=5)
+            if input_type == "int":
+                entry.insert(0, "0")  # Default integer value
+
+        return entry
+
+    def print_configuration(self):
+        """Print the neural network configuration."""
+        try:
+            # Retrieve user inputs
+            first_hidden = int(self.first_hidden_layer.get())
+            second_hidden = int(self.second_hidden_layer.get())
+
+            print("Neural Network Configuration:")
+            print(f"Input Shape: {self.train_x.shape}")
+            print(f"First Hidden Layer: {first_hidden} neurons")
+            print(f"Second Hidden Layer: {second_hidden} neurons")
+            print(f"Output Layer: {self.count} classes")
+        except ValueError:
+            print("Please enter valid integers for the hidden layers.")
+
+
+    # def create_simple_mlp(self, input_shape=(32,), num_classes=10):
+    #     """Create a simple multi-layer perceptron (MLP) model."""
+    #     model = models.Sequential([
+    #         layers.Input(shape=input_shape),
+    #         layers.Dense(64, activation='relu'),
+    #         layers.Dense(64, activation='relu'),
+    #         layers.Dense(num_classes, activation='softmax')
+    #     ])
+    #     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    #     return model
+    #
+    # def create_cnn(self, input_shape=(32, 32, 3), num_classes=10):
+    #     """Create a convolutional neural network (CNN) model."""
+    #     model = models.Sequential([
+    #         layers.Input(shape=input_shape),
+    #         layers.Conv2D(32, (3, 3), activation='relu'),
+    #         layers.MaxPooling2D((2, 2)),
+    #         layers.Conv2D(64, (3, 3), activation='relu'),
+    #         layers.MaxPooling2D((2, 2)),
+    #         layers.Flatten(),
+    #         layers.Dense(64, activation='relu'),
+    #         layers.Dense(num_classes, activation='softmax')
+    #     ])
+    #     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    #     return model
+    #
+    # def create_rnn(self, input_shape=(100, 1), num_classes=10):
+    #     """Create a recurrent neural network (RNN) model."""
+    #     model = models.Sequential([
+    #         layers.Input(shape=input_shape),
+    #         layers.SimpleRNN(64, activation='relu', return_sequences=True),
+    #         layers.SimpleRNN(64, activation='relu'),
+    #         layers.Dense(num_classes, activation='softmax')
+    #     ])
+    #     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    #     return model
 
 if __name__ == "__main__":
     root = tk.Tk()
