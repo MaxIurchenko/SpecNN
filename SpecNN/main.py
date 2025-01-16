@@ -5,13 +5,16 @@ from tkinter import filedialog, colorchooser, ttk
 import spectral
 import numpy as np
 from PIL import Image, ImageTk, ImageGrab
+from tensorflow.python.keras.saving.saved_model.save_impl import input_layer
+import tensorflow as tf
+from tensorflow.python.keras import layers, models
+from tensorflow.python.keras.models import Sequential
+from tensorflow.python.keras.layers import Dense
+import matplotlib.pyplot as plt
+
 # import pandas as pd
 # import cv2
-# import tensorflow as tf
-# from tensorflow.keras import layers, models
-# from tensorflow.keras.models import Sequential
-# from tensorflow.keras.layers import Dense
-# import matplotlib.pyplot as plt
+
 
 
 class App:
@@ -595,67 +598,79 @@ class App:
     def create_simple_mlp_parameters(self):
         # Create table headers
         headers = ["Layer", "Configuration"]
+        self.mlp_parametrs = tk.Label(self.right_label, font=("Arial", 12, "bold"))
+        self.mlp_parametrs.grid(row=9, column=0, sticky="new")
+
         for col, header in enumerate(headers):
-            label = tk.Label(self.right_label, text=header, font=("Arial", 12, "bold"), bg="lightgray")
-            label.grid(row=9, column=col, sticky="nsew", padx=2, pady=2)
+            label = tk.Label(self.mlp_parametrs, text=header, font=("Arial", 12, "bold"), bg="lightgray")
+            label.grid(row=1, column=col, sticky="new", padx=2, pady=2)
 
         unique_values, self.counts = np.unique(self.train_y, return_counts=True)
+        self.output_neurons = len(unique_values)
 
         # Create the table rows
-        self.create_table_row(10, "Input shape", f"{self.train_y.shape}", readonly=True)
-        self.first_hidden_layer = self.create_table_row(11, "First Hidden Layer", "", input_type="int")
-        self.second_hidden_layer = self.create_table_row(12, "Second Hidden Layer", "", input_type="int")
-        self.output_layer = self.create_table_row(13, "Output Layer", f"{self.counts}", readonly=True)
+        self.create_table_row(2, "Input layer", f"{self.train_x.shape[1]}", readonly=True)
+        self.first_hidden_layer = self.create_table_row(3, "First Hidden Layer", "", input_type="int")
+        self.second_hidden_layer = self.create_table_row(4, "Second Hidden Layer", "", input_type="int")
+        self.output_layer = self.create_table_row(5, "Output Layer", f"{self.output_neurons}", readonly=True)
+        self.epoch = self.create_table_row(6, "Epoch", "", input_type="int")
+        self.batch_size = self.create_table_row(7, "Batch size", "", input_type="int")
 
         # Add a button to print the configuration
-        submit_btn = tk.Button(self.right_label, text="Submit", command=self.print_configuration, font=("Arial", 12))
-        submit_btn.grid(row=14, column=0, columnspan=2, pady=10)
+        submit_btn = tk.Button(self.mlp_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
+        submit_btn.grid(row=8, column=0, columnspan=2, pady=10)
 
     def create_table_row(self, row, label_text, default_value, input_type=None, readonly=False):
         """Helper function to create a row in the table."""
-        label = tk.Label(self.right_label, text=label_text, font=("Arial", 12))
-        label.grid(row=row, column=0, sticky="w", padx=5, pady=5)
+        label = tk.Label(self.mlp_parametrs, text=label_text, font=("Arial", 12))
+        label.grid(row=row, column=0, sticky="w", padx=0, pady=0)
 
         if readonly:
             # Create a label for readonly fields
-            entry = tk.Label(self.right_label, text=default_value, font=("Arial", 12), bg="white", relief="solid")
-            entry.grid(row=row, column=1, sticky="nsew", padx=5, pady=5)
+            entry = tk.Label(self.mlp_parametrs, text=default_value, font=("Arial", 12), bg="white", relief="solid")
+            entry.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
         else:
             # Create an entry for user input
-            entry = ttk.Entry(self.right_label, font=("Arial", 12))
-            entry.grid(row=row, column=1, sticky="nsew", padx=5, pady=5)
+            entry = ttk.Entry(self.mlp_parametrs, font=("Arial", 12))
+            entry.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
             if input_type == "int":
                 entry.insert(0, "0")  # Default integer value
 
         return entry
 
-    def print_configuration(self):
-        """Print the neural network configuration."""
-        try:
-            # Retrieve user inputs
-            first_hidden = int(self.first_hidden_layer.get())
-            second_hidden = int(self.second_hidden_layer.get())
+    def make_nn_model(self):
+        selection = self.nn_combobox.get()
+        first_hidden = int(self.first_hidden_layer.get())
+        second_hidden = int(self.second_hidden_layer.get())
 
-            print("Neural Network Configuration:")
-            print(f"Input Shape: {self.train_x.shape}")
-            print(f"First Hidden Layer: {first_hidden} neurons")
-            print(f"Second Hidden Layer: {second_hidden} neurons")
-            print(f"Output Layer: {self.count} classes")
-        except ValueError:
-            print("Please enter valid integers for the hidden layers.")
+        if selection == "Simple MLP":
+            self.model = NN.create_simple_mlp(self.train_x.shape[1],
+                                              int(self.first_hidden_layer.get()),
+                                              int(self.second_hidden_layer.get()),
+                                              self.output_neurons)
+
+            print(self.model.summary())
+
+        elif selection == "CNN":
+            model = self.create_cnn(input_shape=(32, 32, 3), num_classes=10)
+        elif selection == "RNN":
+            model = self.create_rnn(input_shape=(100, 1), num_classes=10)
+        else:
+            self.summary_label.insert("1.0", "Invalid selection.\n")
+            return
 
 
-    # def create_simple_mlp(self, input_shape=(32,), num_classes=10):
-    #     """Create a simple multi-layer perceptron (MLP) model."""
-    #     model = models.Sequential([
-    #         layers.Input(shape=input_shape),
-    #         layers.Dense(64, activation='relu'),
-    #         layers.Dense(64, activation='relu'),
-    #         layers.Dense(num_classes, activation='softmax')
-    #     ])
-    #     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    #     return model
-    #
+class NN:
+    def create_simple_mlp(input_shape, first_layer, second_layer, output_layer):
+        """Create a simple multi-layer perceptron (MLP) model."""
+        model = models.Sequential([
+            layers.Input(shape=input_shape),
+            layers.Dense(first_layer, activation='relu'),
+            layers.Dense(second_layer, activation='relu'),
+            layers.Dense(output_layer, activation='softmax')
+        ])
+        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        return model
     # def create_cnn(self, input_shape=(32, 32, 3), num_classes=10):
     #     """Create a convolutional neural network (CNN) model."""
     #     model = models.Sequential([
