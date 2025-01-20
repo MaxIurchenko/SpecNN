@@ -106,6 +106,15 @@ class App:
         self.nn_parameters = tk.Label(self.right_label)
         self.nn_parameters.grid(row=8, column=0, sticky="nwe")
 
+        # self.start_train = tk.Button(self.right_label, text="Start train", command=self.start_train_nn)
+        # self.delete_button.grid(row=10, column=0, sticky="ne")
+        # self.stop_train = tk.Button(self.right_label, text="Stop train", command=self.stop_train_nn)
+        # self.delete_button.grid(row=5, column=0, sticky="nw")
+        # self.test = tk.Button(self.right_label, text="Test", command=self.test_nn)
+        # self.delete_button.grid(row=5, column=0, sticky="ne")
+        # self.save_nn = tk.Button(self.right_label, text="Save", command=self.save_nn)
+        # self.delete_button.grid(row=5, column=0, sticky="nw")
+
         # Variables
         self.spec_image = None
         self.spec_image_info = None
@@ -510,6 +519,42 @@ class App:
 
         self.update_shape_label()
 
+        def calculate_height_width(num_features):
+            """
+            Calculate height and width to reshape each spectrum (row)
+            into a 2D grid. Adjust num_features if necessary to ensure compatibility.
+            """
+            while True:
+                height = int(np.sqrt(num_features))
+                width = height
+                while height * width < num_features:
+                    width += 1
+                if height * width == num_features:
+                    return height, width, num_features
+                num_features -= 1  # Reduce the number of features if not divisible
+
+        def adjust_spectrum_features(data, num_features):
+            """
+            Adjust each row (spectrum) in the data to the specified number of features
+            by removing excess elements from the end of each row.
+            """
+            return data[:, :num_features]
+
+        # Example usage in your main process
+        num_features = self.train_x.shape[1]
+
+        # Calculate height, width, and adjusted num_features
+        height, width, num_features = calculate_height_width(num_features)
+        print(f"Calculated dimensions: height={height}, width={width}, num_features={num_features}")
+
+        # Adjust each spectrum to the correct number of features
+        self.train_x_cnn = adjust_spectrum_features(self.train_x, num_features)
+        print(f"Adjusted data shape: {self.train_x_cnn.shape}")
+
+        # Reshape each spectrum into (height, width, 1)
+        self.train_x_cnn = self.train_x_cnn.reshape(-1, height, width, 1)
+        print(f"Reshaped data: {self.train_x_cnn.shape}")
+
         # Check the shape of the resulting arrays
         print(f"Training data generated: {self.train_x.shape}, {self.train_y.shape}")
         print(self.train_x[0], self.train_y)
@@ -588,7 +633,7 @@ class App:
         if selection == "Simple MLP":
             model = self.create_simple_mlp_parameters()
         elif selection == "CNN":
-            model = self.create_cnn(input_shape=(32, 32, 3), num_classes=10)
+            model = self.create_cnn_parameters()
         elif selection == "RNN":
             model = self.create_rnn(input_shape=(100, 1), num_classes=10)
         else:
@@ -598,11 +643,11 @@ class App:
     def create_simple_mlp_parameters(self):
         # Create table headers
         headers = ["Layer", "Configuration"]
-        self.mlp_parametrs = tk.Label(self.right_label, font=("Arial", 12, "bold"))
-        self.mlp_parametrs.grid(row=9, column=0, sticky="new")
+        self.nn_parametrs = tk.Label(self.right_label, font=("Arial", 12, "bold"))
+        self.nn_parametrs.grid(row=9, column=0, sticky="new")
 
         for col, header in enumerate(headers):
-            label = tk.Label(self.mlp_parametrs, text=header, font=("Arial", 12, "bold"), bg="lightgray")
+            label = tk.Label(self.nn_parametrs, text=header, font=("Arial", 12, "bold"), bg="lightgray")
             label.grid(row=1, column=col, sticky="new", padx=2, pady=2)
 
         unique_values, self.counts = np.unique(self.train_y, return_counts=True)
@@ -610,28 +655,57 @@ class App:
 
         # Create the table rows
         self.create_table_row(2, "Input layer", f"{self.train_x.shape[1]}", readonly=True)
-        self.first_hidden_layer = self.create_table_row(3, "First Hidden Layer", "", input_type="int")
-        self.second_hidden_layer = self.create_table_row(4, "Second Hidden Layer", "", input_type="int")
+        self.first_hidden_layer = self.create_table_row(3, "First Hidden Layer", "16", input_type="int")
+        self.second_hidden_layer = self.create_table_row(4, "Second Hidden Layer", "32", input_type="int")
         self.output_layer = self.create_table_row(5, "Output Layer", f"{self.output_neurons}", readonly=True)
-        self.epoch = self.create_table_row(6, "Epoch", "", input_type="int")
-        self.batch_size = self.create_table_row(7, "Batch size", "", input_type="int")
+        self.epoch = self.create_table_row(6, "Epoch", "5", input_type="int")
+        self.batch_size = self.create_table_row(7, "Batch size", "1", input_type="int")
 
         # Add a button to print the configuration
         submit_btn = tk.Button(self.mlp_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
         submit_btn.grid(row=8, column=0, columnspan=2, pady=10)
 
+    def create_cnn_parameters(self):
+        # Create table headers
+        headers = ["Layer", "Configuration"]
+        self.nn_parametrs = tk.Label(self.right_label, font=("Arial", 12, "bold"))
+        self.nn_parametrs.grid(row=9, column=0, sticky="new")
+
+        for col, header in enumerate(headers):
+            label = tk.Label(self.nn_parametrs, text=header, font=("Arial", 12, "bold"), bg="lightgray")
+            label.grid(row=1, column=col, sticky="new", padx=2, pady=2)
+
+        unique_values, self.counts = np.unique(self.train_y, return_counts=True)
+        self.output_neurons = len(unique_values)
+
+        # Create the table rows
+        self.create_table_row(2, "Input layer", f"{self.train_x_cnn.shape}", readonly=True)
+        self.first_layer = self.create_table_row(3, "First Conv. Layer", 16, input_type="int")
+        self.first_layer_kernel = self.create_table_row(4, "First Conv. kernel", "3", input_type="int")
+        self.second_layer= self.create_table_row(5, "Second Conv. Layer", "32", input_type="int")
+        self.second_layer_kernel= self.create_table_row(6, "Second Conv. Kernel", "3", input_type="int")
+        self.third_layer = self.create_table_row(7, "Third layer", "32", input_type="int")
+        self.max_pulling = self.create_table_row(8, "Max pulling", "3", input_type="int")
+        self.output_layer = self.create_table_row(9, "Output Layer", f"{self.output_neurons}", readonly=True)
+        self.epoch = self.create_table_row(10, "Epoch", "5", input_type="int")
+        self.batch_size = self.create_table_row(11, "Batch size", "1", input_type="int")
+
+        # Add a button to print the configuration
+        submit_btn = tk.Button(self.nn_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
+        submit_btn.grid(row=12, column=0, columnspan=2, pady=10)
+
     def create_table_row(self, row, label_text, default_value, input_type=None, readonly=False):
         """Helper function to create a row in the table."""
-        label = tk.Label(self.mlp_parametrs, text=label_text, font=("Arial", 12))
+        label = tk.Label(self.nn_parametrs, text=label_text, font=("Arial", 12))
         label.grid(row=row, column=0, sticky="w", padx=0, pady=0)
 
         if readonly:
             # Create a label for readonly fields
-            entry = tk.Label(self.mlp_parametrs, text=default_value, font=("Arial", 12), bg="white", relief="solid")
+            entry = tk.Label(self.nn_parametrs, text=default_value, font=("Arial", 12), bg="white", relief="solid")
             entry.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
         else:
             # Create an entry for user input
-            entry = ttk.Entry(self.mlp_parametrs, font=("Arial", 12))
+            entry = ttk.Entry(self.nn_parametrs, font=("Arial", 12))
             entry.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
             if input_type == "int":
                 entry.insert(0, "0")  # Default integer value
@@ -640,10 +714,10 @@ class App:
 
     def make_nn_model(self):
         selection = self.nn_combobox.get()
-        first_hidden = int(self.first_hidden_layer.get())
-        second_hidden = int(self.second_hidden_layer.get())
 
         if selection == "Simple MLP":
+            first_hidden = int(self.first_hidden_layer.get())
+            second_hidden = int(self.second_hidden_layer.get())
             self.model = NN.create_simple_mlp(self.train_x.shape[1],
                                               int(self.first_hidden_layer.get()),
                                               int(self.second_hidden_layer.get()),
@@ -652,12 +726,54 @@ class App:
             print(self.model.summary())
 
         elif selection == "CNN":
-            model = self.create_cnn(input_shape=(32, 32, 3), num_classes=10)
+            self.model = NN.create_cnn(self.train_x_cnn.shape[1:],
+                                      int(self.first_layer.get()),
+                                      int(self.first_layer_kernel.get()),
+                                      int(self.second_layer.get()),
+                                      int(self.second_layer_kernel.get()),
+                                      int(self.third_layer.get()),
+                                      int(self.max_pulling.get()),
+                                      self.output_neurons)
+            print(self.model.summary())
+
         elif selection == "RNN":
             model = self.create_rnn(input_shape=(100, 1), num_classes=10)
         else:
             self.summary_label.insert("1.0", "Invalid selection.\n")
             return
+
+        for widget in self.nn_parametrs.winfo_children():
+            widget.destroy()
+
+            # Display model summary
+        self.show_model_summary()
+
+    def show_model_summary(self):
+        """Display the model's summary after it's created."""
+        # Create a text widget to display the model summary
+        summary_label = tk.Label(self.nn_parametrs, text="Model Summary", font=("Arial", 12, "bold"))
+        summary_label.grid(row=9, column=0, sticky="nsew", padx=0, pady=0)
+
+        # Create a text box to hold the model summary
+        summary_text = tk.Text(self.nn_parametrs, wrap="word", font=("Courier", 10), width=60, height=30)
+        summary_text.grid(sticky="nsew", padx=0, pady=0)
+
+        # Fetch model summary and insert it into the text box
+        from io import StringIO
+        summary_buffer = StringIO()
+        self.model.summary(print_fn=lambda x: summary_buffer.write(x + "\n"))
+        summary_text.insert("1.0", summary_buffer.getvalue())
+        summary_text.configure(state="disabled")  # Make the text box read-only
+
+        # Optionally, add a button to reset the UI
+        reset_btn = tk.Button(self.nn_parametrs, text="Reset", command=self.reset_ui, font=("Arial", 12))
+        reset_btn.pack(pady=10)
+
+    def reset_ui(self):
+        """Reset the UI to the initial state for parameter entry."""
+        for widget in self.nn_parametrs.winfo_children():
+            widget.destroy()
+        self.create_simple_mlp_parameters()  # Or `self.create_cnn_parameters()` depending on the selection
 
 
 class NN:
@@ -671,20 +787,23 @@ class NN:
         ])
         model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
         return model
-    # def create_cnn(self, input_shape=(32, 32, 3), num_classes=10):
-    #     """Create a convolutional neural network (CNN) model."""
-    #     model = models.Sequential([
-    #         layers.Input(shape=input_shape),
-    #         layers.Conv2D(32, (3, 3), activation='relu'),
-    #         layers.MaxPooling2D((2, 2)),
-    #         layers.Conv2D(64, (3, 3), activation='relu'),
-    #         layers.MaxPooling2D((2, 2)),
-    #         layers.Flatten(),
-    #         layers.Dense(64, activation='relu'),
-    #         layers.Dense(num_classes, activation='softmax')
-    #     ])
-    #     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    #     return model
+
+    def create_cnn(input_shape, first_layer, first_layer_kernel, second_layer, second_layer_kernel, third_layer,
+                   max_pulling, output_size):
+        """Create a convolutional neural network (CNN) model."""
+        model = models.Sequential([
+            layers.Input(shape=input_shape),  # input_shape must now be a 4D shape
+            layers.Conv2D(first_layer, (first_layer_kernel, first_layer_kernel), activation='relu'),
+            layers.MaxPooling2D((max_pulling, max_pulling)),
+            layers.Conv2D(second_layer, (second_layer_kernel, second_layer_kernel), activation='relu'),
+            layers.MaxPooling2D((max_pulling, max_pulling)),
+            layers.Flatten(),
+            layers.Dense(third_layer, activation='relu'),
+            layers.Dense(output_size, activation='softmax')
+        ])
+        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+        return model
+
     #
     # def create_rnn(self, input_shape=(100, 1), num_classes=10):
     #     """Create a recurrent neural network (RNN) model."""
