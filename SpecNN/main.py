@@ -852,6 +852,7 @@ class App:
         ax.set_ylabel("Loss")
         ax.legend()
 
+
         # Display the plot in a tkinter canvas
         canvas = tk.Canvas(plot_window, width=800, height=600)
         canvas.pack(fill="both", expand=True)
