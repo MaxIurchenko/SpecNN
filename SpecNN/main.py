@@ -1,15 +1,13 @@
 import tkinter as tk
-from tkinter import filedialog, colorchooser, ttk
-# from unittest.mock import right
-
+from tkinter import filedialog, colorchooser, ttk, messagebox
 import spectral
 import numpy as np
 from PIL import Image, ImageTk, ImageGrab
+from keras.src.utils.module_utils import tensorflow
 from tensorflow.python.keras.saving.saved_model.save_impl import input_layer
 import tensorflow as tf
-from tensorflow.python.keras import layers, models
-from tensorflow.python.keras.models import Sequential
-from tensorflow.python.keras.layers import Dense
+from tensorflow import keras
+from tensorflow.keras import layers, models, callbacks
 import matplotlib.pyplot as plt
 
 # import pandas as pd
@@ -28,6 +26,7 @@ class App:
         self.frame.grid_rowconfigure(0, weight=0)
         self.frame.grid_rowconfigure(1, weight=1)
         self.frame.grid_columnconfigure(0, weight=1)
+        self.frame.grid_columnconfigure(1, weight=0)
 
         # Top menu -----------------------------------------------------------------------------------------------
         self.top_menu = tk.Label(self.frame)
@@ -49,8 +48,8 @@ class App:
         self.label_image.bind("<Configure>", self.on_resize)
 
         # Right label with parameters
-        self.right_label = tk.Label(self.frame)
-        self.right_label.config(justify='left', background='white', width=40)
+        self.right_label = tk.Label(self.frame, width=80)
+        self.right_label.config(justify='left', background='white')
         self.right_label.grid(row=1, column=1, sticky='ns')
 
         self.rect_table = ttk.Treeview(self.right_label, columns=("x1", "y1", "x2", "y2", "color", "data"), show="headings")
@@ -106,14 +105,14 @@ class App:
         self.nn_parameters = tk.Label(self.right_label)
         self.nn_parameters.grid(row=8, column=0, sticky="nwe")
 
-        # self.start_train = tk.Button(self.right_label, text="Start train", command=self.start_train_nn)
-        # self.delete_button.grid(row=10, column=0, sticky="ne")
-        # self.stop_train = tk.Button(self.right_label, text="Stop train", command=self.stop_train_nn)
-        # self.delete_button.grid(row=5, column=0, sticky="nw")
-        # self.test = tk.Button(self.right_label, text="Test", command=self.test_nn)
-        # self.delete_button.grid(row=5, column=0, sticky="ne")
-        # self.save_nn = tk.Button(self.right_label, text="Save", command=self.save_nn)
-        # self.delete_button.grid(row=5, column=0, sticky="nw")
+        self.start_train = tk.Button(self.right_label, text="Start train", command=self.start_train_nn)
+        self.start_train.grid(row=14, column=0, sticky="new")
+        self.stop_train = tk.Button(self.right_label, text="Stop train", command=self.stop_train_nn)
+        self.stop_train.grid(row=15, column=0, sticky="new")
+        self.test = tk.Button(self.right_label, text="Test", command=self.test_nn)
+        self.test.grid(row=16, column=0, sticky="new")
+        self.save_nn = tk.Button(self.right_label, text="Save", command=self.save_nn)
+        self.save_nn.grid(row=17, column=0, sticky="new")
 
         # Variables
         self.spec_image = None
@@ -127,6 +126,10 @@ class App:
         self.scale_y = 1
         self.magnifier_window = None
         self.is_magnifier_active = False
+        self.stop_training_callback = StopTrainingCallback()
+        self.test_x, self.test_y = None, None
+        self.batch_size_value = None
+        self.epoch_value = None
 
         # Rectangle
         self.label_image.bind("<ButtonPress-1>", self.start_draw)
@@ -662,7 +665,7 @@ class App:
         self.batch_size = self.create_table_row(7, "Batch size", "1", input_type="int")
 
         # Add a button to print the configuration
-        submit_btn = tk.Button(self.mlp_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
+        submit_btn = tk.Button(self.nn_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
         submit_btn.grid(row=8, column=0, columnspan=2, pady=10)
 
     def create_cnn_parameters(self):
@@ -678,21 +681,36 @@ class App:
         unique_values, self.counts = np.unique(self.train_y, return_counts=True)
         self.output_neurons = len(unique_values)
 
-        # Create the table rows
+        # Example usage with default values
         self.create_table_row(2, "Input layer", f"{self.train_x_cnn.shape}", readonly=True)
-        self.first_layer = self.create_table_row(3, "First Conv. Layer", 16, input_type="int")
-        self.first_layer_kernel = self.create_table_row(4, "First Conv. kernel", "3", input_type="int")
-        self.second_layer= self.create_table_row(5, "Second Conv. Layer", "32", input_type="int")
-        self.second_layer_kernel= self.create_table_row(6, "Second Conv. Kernel", "3", input_type="int")
-        self.third_layer = self.create_table_row(7, "Third layer", "32", input_type="int")
-        self.max_pulling = self.create_table_row(8, "Max pulling", "3", input_type="int")
+
+        # Predefine default values
+        default_filters = [16, 32, 32]
+        default_kernels = [3, 3, 3]
+        max_pool_default = min(3, min(self.train_x_cnn.shape[1], self.train_x_cnn.shape[2]))
+
+        self.first_layer = self.create_table_row(3, "First Conv. Layer", default_filters[0], input_type="int")
+        self.first_layer_kernel = self.create_table_row(4, "First Conv. Kernel", default_kernels[0], input_type="int")
+        self.second_layer = self.create_table_row(5, "Second Conv. Layer", default_filters[1], input_type="int")
+        self.second_layer_kernel = self.create_table_row(6, "Second Conv. Kernel", default_kernels[1], input_type="int")
+        self.third_layer = self.create_table_row(7, "Third Layer", default_filters[2], input_type="int")
+        self.max_pulling = self.create_table_row(8, "Max Pulling", max_pool_default, input_type="int")
+
         self.output_layer = self.create_table_row(9, "Output Layer", f"{self.output_neurons}", readonly=True)
-        self.epoch = self.create_table_row(10, "Epoch", "5", input_type="int")
-        self.batch_size = self.create_table_row(11, "Batch size", "1", input_type="int")
+        self.epoch = self.create_table_row(10, "Epoch", 5, input_type="int")
+        self.batch_size = self.create_table_row(11, "Batch Size", 1, input_type="int")
 
         # Add a button to print the configuration
         submit_btn = tk.Button(self.nn_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
         submit_btn.grid(row=12, column=0, columnspan=2, pady=10)
+
+    def validate_int(self, value):
+        """
+        Validate that the input is an integer or empty (to allow corrections).
+        :param value: The current value of the entry field.
+        :return: True if valid, False otherwise.
+        """
+        return value.isdigit() or value == ""
 
     def create_table_row(self, row, label_text, default_value, input_type=None, readonly=False):
         """Helper function to create a row in the table."""
@@ -707,13 +725,21 @@ class App:
             # Create an entry for user input
             entry = ttk.Entry(self.nn_parametrs, font=("Arial", 12))
             entry.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
+
+            # Insert the actual default value
+            entry.delete(0, tk.END)  # Clear any existing value
+            entry.insert(0, str(default_value))  # Insert the provided default value as a string
+
             if input_type == "int":
-                entry.insert(0, "0")  # Default integer value
+                # Validate integer input
+                entry.config(validate="key", validatecommand=(self.root.register(self.validate_int), "%P"))
 
         return entry
 
     def make_nn_model(self):
         selection = self.nn_combobox.get()
+        self.batch_size_value = self.batch_size.get()
+        self.epoch_value = self.epoch.get()
 
         if selection == "Simple MLP":
             first_hidden = int(self.first_hidden_layer.get())
@@ -775,6 +801,128 @@ class App:
             widget.destroy()
         self.create_simple_mlp_parameters()  # Or `self.create_cnn_parameters()` depending on the selection
 
+    def start_train_nn(self):
+        """Start the training process with progress display."""
+        # try:
+        #     if self.model is None:
+        #         tk.messagebox.showerror("Error", "No model is initialized. Please build a model first.")
+        #         return
+
+            # # Create a new window to display training progress
+            # progress_window = tk.Toplevel(self.nn_parametrs)
+            # progress_window.title("Training Progress")
+            #
+            # # Create a text widget for progress logs
+            # text_widget = tk.Text(progress_window, wrap="word", font=("Courier", 10), width=60, height=15)
+            # text_widget.pack(fill="both", expand=True, padx=10, pady=10)
+            #
+            # # Initialize the callback for training progress
+            # progress_callback = TrainingProgressCallback(text_widget)
+            #
+            # # Train the model
+        print(self.batch_size_value)
+        print(self.epoch_value)
+        #self.stop_training_callback = StopTrainingCallback()  # Ensure the stop callback is available
+        history = self.model.fit(
+            self.train_x, self.train_y,
+            batch_size=int(self.batch_size_value),
+            epochs=int(self.epoch_value),
+            validation_split=0.1,
+           #callbacks=[self.stop_training_callback, progress_callback]
+        )
+
+        #     # Notify training completion
+        #     tk.messagebox.showinfo("Training Complete", "The training process has been completed.")
+        #
+        #     # Plot loss after training
+        #    # self.plot_training_loss(history.history['loss'])
+        # except Exception as e:
+        #     tk.messagebox.showerror("Error", f"An error occurred during training:\n{str(e)}")
+
+    def plot_training_loss(self, loss_history):
+        """Plot the training loss history in a new window."""
+        plot_window = tk.Toplevel(self.nn_parametrs)
+        plot_window.title("Training Loss")
+
+        # Create a Matplotlib figure
+        fig, ax = plt.subplots()
+        ax.plot(loss_history, label="Training Loss", color="blue")
+        ax.set_title("Training Loss Over Epochs")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Loss")
+        ax.legend()
+
+        # Display the plot in a tkinter canvas
+        canvas = tk.Canvas(plot_window, width=800, height=600)
+        canvas.pack(fill="both", expand=True)
+
+        # Embed the Matplotlib figure in the Tkinter canvas
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        figure_canvas = FigureCanvasTkAgg(fig, plot_window)
+        figure_canvas.get_tk_widget().pack(fill="both", expand=True)
+        figure_canvas.draw()
+
+    def stop_train_nn(self):
+        """Stop the training process."""
+        if hasattr(self, 'stop_training_callback'):
+            self.stop_training_callback.stop = True
+            tk.messagebox.showinfo("Training Stopped", "Training has been stopped.")
+        else:
+            tk.messagebox.showerror("Error", "Training cannot be stopped because it hasn't started yet.")
+
+    def test_nn(self):
+        """Test the model on the validation/test dataset."""
+        try:
+            if self.model is None:
+                tk.messagebox.showerror("Error", "No model is initialized. Please build a model first.")
+                return
+
+            # Test logic
+            results = self.model.evaluate(self.test_x, self.test_y, verbose=0)
+            tk.messagebox.showinfo("Testing Results", f"Test results:\nLoss: {results[0]}\nAccuracy: {results[1]}")
+        except Exception as e:
+            tk.messagebox.showerror("Error", f"An error occurred during testing:\n{str(e)}")
+
+    def save_nn(self):
+        """Save the trained model to disk."""
+        try:
+            if self.model is None:
+                tk.messagebox.showerror("Error", "No model is initialized. Please build a model first.")
+                return
+
+            # Save the model
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".h5",
+                filetypes=[("HDF5 files", "*.h5"), ("All files", "*.*")]
+            )
+            if file_path:
+                self.model.save(file_path)
+                tk.messagebox.showinfo("Model Saved", f"Model has been saved to:\n{file_path}")
+        except Exception as e:
+            tk.messagebox.showerror("Error", f"An error occurred during saving:\n{str(e)}")
+
+
+class StopTrainingCallback(tensorflow.keras.callbacks.Callback):
+    """Callback to stop training."""
+    def __init__(self):
+        super().__init__()
+        self.stop = False
+
+    def on_batch_end(self, batch, logs=None):
+        if self.stop:
+            self.model.stop_training = True
+
+class TrainingProgressCallback(tf.keras.callbacks.Callback):
+    """Callback to log progress after each epoch."""
+    def __init__(self, text_widget):
+        super().__init__()
+        self.text_widget = text_widget
+
+    def on_epoch_end(self, epoch, logs=None):
+        # Append training logs to the text widget
+        message = f"Epoch {epoch + 1}, Loss: {logs['loss']:.4f}, Accuracy: {logs.get('accuracy', 0):.4f}\n"
+        self.text_widget.insert("end", message)
+        self.text_widget.see("end")  # Scroll to the latest log
 
 class NN:
     def create_simple_mlp(input_shape, first_layer, second_layer, output_layer):
@@ -789,19 +937,33 @@ class NN:
         return model
 
     def create_cnn(input_shape, first_layer, first_layer_kernel, second_layer, second_layer_kernel, third_layer,
-                   max_pulling, output_size):
-        """Create a convolutional neural network (CNN) model."""
-        model = models.Sequential([
-            layers.Input(shape=input_shape),  # input_shape must now be a 4D shape
-            layers.Conv2D(first_layer, (first_layer_kernel, first_layer_kernel), activation='relu'),
-            layers.MaxPooling2D((max_pulling, max_pulling)),
-            layers.Conv2D(second_layer, (second_layer_kernel, second_layer_kernel), activation='relu'),
-            layers.MaxPooling2D((max_pulling, max_pulling)),
-            layers.Flatten(),
-            layers.Dense(third_layer, activation='relu'),
-            layers.Dense(output_size, activation='softmax')
-        ])
-        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+                   max_pulling, output_neurons):
+        model = models.Sequential()
+
+        # First Convolutional Layer
+        model.add(layers.Conv2D(filters=first_layer, kernel_size=(first_layer_kernel, first_layer_kernel),
+                                activation='relu', input_shape=input_shape))
+        # Dynamically adjust MaxPooling kernel size
+        pool_height = min(max_pulling, model.output_shape[1])
+        pool_width = min(max_pulling, model.output_shape[2])
+
+        model.add(layers.MaxPooling2D(pool_size=(pool_height, pool_width)))
+
+        # Second Convolutional Layer
+        model.add(layers.Conv2D(filters=second_layer, kernel_size=(second_layer_kernel, second_layer_kernel),
+                                activation='relu'))
+        # Dynamically adjust MaxPooling kernel size
+        pool_height = min(max_pulling, model.output_shape[1])
+        pool_width = min(max_pulling, model.output_shape[2])
+
+        model.add(layers.MaxPooling2D(pool_size=(pool_height, pool_width)))
+
+        # Flatten and Fully Connected Layers
+        model.add(layers.Flatten())
+        model.add(layers.Dense(third_layer, activation='relu'))
+        model.add(layers.Dense(output_neurons, activation='softmax'))
+
+        model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
         return model
 
     #
