@@ -130,6 +130,7 @@ class App:
         self.test_x, self.test_y = None, None
         self.batch_size_value = None
         self.epoch_value = None
+        self.max_value = None
 
         # Rectangle
         self.label_image.bind("<ButtonPress-1>", self.start_draw)
@@ -164,6 +165,10 @@ class App:
 
             if self.spec_image_info is None:
                 return
+
+            # Get the max and min values of the spectral image
+            self.max_value = np.amax(self.spec_image)
+
 
             bands = self.spec_image_info['default bands']
             rgb_image = np.zeros((self.spec_image_info["lines"], self.spec_image_info["samples"], 3), dtype=np.float32)
@@ -212,7 +217,7 @@ class App:
         self.label_image.create_image(0, 0, anchor="nw", image=self.tk_image)
 
         # Redraw rectangles with new coordinates
-        for orig_x1, orig_y1, orig_x2, orig_y2, color in self.rectangles:
+        for orig_x1, orig_y1, orig_x2, orig_y2, color, data in self.rectangles:
             scaled_x1 = orig_x1 * self.scale_x
             scaled_y1 = orig_y1 * self.scale_y
             scaled_x2 = orig_x2 * self.scale_x
@@ -520,6 +525,9 @@ class App:
         self.train_x = np.vstack(self.train_x)  # Stack the individual arrays vertically
         self.train_y = np.concatenate(self.train_y)  # Concatenate all labels
 
+        #Normalization data
+        self.train_x = self.train_x / self.max_value
+
         self.update_shape_label()
 
         def calculate_height_width(num_features):
@@ -658,11 +666,11 @@ class App:
 
         # Create the table rows
         self.create_table_row(2, "Input layer", f"{self.train_x.shape[1]}", readonly=True)
-        self.first_hidden_layer = self.create_table_row(3, "First Hidden Layer", "16", input_type="int")
-        self.second_hidden_layer = self.create_table_row(4, "Second Hidden Layer", "32", input_type="int")
+        self.first_hidden_layer = self.create_table_row(3, "First Hidden Layer", 16, input_type="int")
+        self.second_hidden_layer = self.create_table_row(4, "Second Hidden Layer", 32, input_type="int")
         self.output_layer = self.create_table_row(5, "Output Layer", f"{self.output_neurons}", readonly=True)
-        self.epoch = self.create_table_row(6, "Epoch", "5", input_type="int")
-        self.batch_size = self.create_table_row(7, "Batch size", "1", input_type="int")
+        self.epoch = self.create_table_row(6, "Epoch", 5, input_type="int")
+        self.batch_size = self.create_table_row(7, "Batch size", 1, input_type="int")
 
         # Add a button to print the configuration
         submit_btn = tk.Button(self.nn_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
@@ -752,7 +760,8 @@ class App:
             print(self.model.summary())
 
         elif selection == "CNN":
-            self.model = NN.create_cnn(self.train_x_cnn.shape[1:],
+            self.train_x = self.train_x_cnn
+            self.model = NN.create_cnn(self.train_x.shape[1:],
                                       int(self.first_layer.get()),
                                       int(self.first_layer_kernel.get()),
                                       int(self.second_layer.get()),
@@ -781,7 +790,7 @@ class App:
         summary_label.grid(row=9, column=0, sticky="nsew", padx=0, pady=0)
 
         # Create a text box to hold the model summary
-        summary_text = tk.Text(self.nn_parametrs, wrap="word", font=("Courier", 10), width=60, height=30)
+        summary_text = tk.Text(self.nn_parametrs, wrap="word", font=("Courier", 10), width=40, height=30)
         summary_text.grid(sticky="nsew", padx=0, pady=0)
 
         # Fetch model summary and insert it into the text box
@@ -793,13 +802,13 @@ class App:
 
         # Optionally, add a button to reset the UI
         reset_btn = tk.Button(self.nn_parametrs, text="Reset", command=self.reset_ui, font=("Arial", 12))
-        reset_btn.pack(pady=10)
+        reset_btn.grid(row=1, pady=10, sticky="ns")
 
     def reset_ui(self):
         """Reset the UI to the initial state for parameter entry."""
         for widget in self.nn_parametrs.winfo_children():
             widget.destroy()
-        self.create_simple_mlp_parameters()  # Or `self.create_cnn_parameters()` depending on the selection
+        # self.create_simple_mlp_parameters()  # Or `self.create_cnn_parameters()` depending on the selection
 
     def start_train_nn(self):
         """Start the training process with progress display."""
@@ -928,8 +937,11 @@ class TrainingProgressCallback(tf.keras.callbacks.Callback):
 class NN:
     def create_simple_mlp(input_shape, first_layer, second_layer, output_layer):
         """Create a simple multi-layer perceptron (MLP) model."""
+        # Ensure input_shape is a tuple
+        if isinstance(input_shape, int):
+            input_shape = (input_shape,)  # Convert single integer to tuple
         model = models.Sequential([
-            layers.Input(shape=input_shape),
+            layers.Input(input_shape,),
             layers.Dense(first_layer, activation='relu'),
             layers.Dense(second_layer, activation='relu'),
             layers.Dense(output_layer, activation='softmax')
