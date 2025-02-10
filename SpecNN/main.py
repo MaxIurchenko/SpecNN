@@ -8,7 +8,14 @@ from tensorflow.python.keras.saving.saved_model.save_impl import input_layer
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers, models, callbacks
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.regularizers import l2
 import matplotlib.pyplot as plt
+from tensorflow.python.keras.utils.np_utils import to_categorical
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+
+
 
 # import pandas as pd
 # import cv2
@@ -131,6 +138,8 @@ class App:
         self.batch_size_value = None
         self.epoch_value = None
         self.max_value = None
+        self.min_value = None
+        self.dataset = None
 
         # Rectangle
         self.label_image.bind("<ButtonPress-1>", self.start_draw)
@@ -168,6 +177,7 @@ class App:
 
             # Get the max and min values of the spectral image
             self.max_value = np.amax(self.spec_image)
+            self.min_value = np.amin(self.spec_image)
 
 
             bands = self.spec_image_info['default bands']
@@ -507,68 +517,51 @@ class App:
 
         for (x1, y1, x2, y2, color, data) in self.rectangles:
             # Extract spectral data from the spec_image within the rectangle (x1, y1, x2, y2)
-            spectral_data = self.spec_image[y1:y2, x1:x2, :]  # Extract the region for all bands
+            spectral_data = np.array(self.spec_image[y1:y2, x1:x2, :])  # (height, width, num_bands)
+            print(f"specral_data.shape: {spectral_data.shape}")
 
-            # Check the shape of the extracted spectral data (should be (height, width, num_bands))
-            height, width, num_bands = spectral_data.shape
+            # Flatten spectral data: (height, width, num_bands) → (num_pixels, num_bands)
+            flattened_spectral_data = spectral_data.reshape(-1, spectral_data.shape[2])
 
-            # Flatten the spectral data into (height * width, num_bands)
-            flattened_spectral_data = spectral_data.reshape(-1, num_bands)
+            # Append correctly to lists
+            self.train_x.extend(flattened_spectral_data)  # Properly appends each pixel's spectral values
 
-            # Append the flattened data to training features
-            self.train_x.append(flattened_spectral_data)
+            # If data == 0, assign zero label
+            if data == 0:
+                self.train_y.extend([0] * flattened_spectral_data.shape[0])  # Label as 0
+            else:
+                self.train_y.extend([data] * flattened_spectral_data.shape[0])  # Normal label
 
-            # Append the label (which is stored in 'data')
-            self.train_y.append(np.full(flattened_spectral_data.shape[0], data))  # One label for each pixel
+        # Convert lists to numpy arrays
+        self.train_x = np.array(self.train_x)  # Shape: (total_pixels, num_bands)
+        self.train_y = np.array(self.train_y)  # Shape: (total_pixels,)
 
-        # Convert the training data to numpy arrays
-        self.train_x = np.vstack(self.train_x)  # Stack the individual arrays vertically
-        self.train_y = np.concatenate(self.train_y)  # Concatenate all labels
+        # Normalize train_x
+        range_value = self.max_value - self.min_value
+        self.train_x = (self.train_x - self.min_value) / (range_value + 1e-10)  # Avoid division by zero
 
-        #Normalization data
-        self.train_x = self.train_x / self.max_value
+        print(f"train_x shape: {self.train_x.shape}")
+        print(f"train_y shape: {self.train_y.shape}")
+
+        # Encode labels
+        unique_values, self.counts = np.unique(self.train_y, return_counts=True)
+        self.output_neurons = len(unique_values)
+
+        # Handle one-hot encoding
+        label_encoder = LabelEncoder()
+        self.train_y = label_encoder.fit_transform(self.train_y)  # Encode labels
+        self.train_y = keras.utils.to_categorical(self.train_y, num_classes=self.output_neurons)  # One-hot encode
+
+        # If `data == 0`, ensure labels are all-zero vectors
+        if 0 in label_encoder.classes_:
+            zero_index = np.where(label_encoder.classes_ == 0)[0][0]  # Find index of 0 in labels
+            for i in range(len(self.train_y)):
+                if np.argmax(self.train_y[i]) == zero_index:
+                    self.train_y[i] = np.zeros(self.output_neurons)  # Replace with (0,0,0,...)
+
+        print(f"MLP data prepared: {self.train_x.shape}, {self.train_y.shape}")
 
         self.update_shape_label()
-
-        def calculate_height_width(num_features):
-            """
-            Calculate height and width to reshape each spectrum (row)
-            into a 2D grid. Adjust num_features if necessary to ensure compatibility.
-            """
-            while True:
-                height = int(np.sqrt(num_features))
-                width = height
-                while height * width < num_features:
-                    width += 1
-                if height * width == num_features:
-                    return height, width, num_features
-                num_features -= 1  # Reduce the number of features if not divisible
-
-        def adjust_spectrum_features(data, num_features):
-            """
-            Adjust each row (spectrum) in the data to the specified number of features
-            by removing excess elements from the end of each row.
-            """
-            return data[:, :num_features]
-
-        # Example usage in your main process
-        num_features = self.train_x.shape[1]
-
-        # Calculate height, width, and adjusted num_features
-        height, width, num_features = calculate_height_width(num_features)
-        print(f"Calculated dimensions: height={height}, width={width}, num_features={num_features}")
-
-        # Adjust each spectrum to the correct number of features
-        self.train_x_cnn = adjust_spectrum_features(self.train_x, num_features)
-        print(f"Adjusted data shape: {self.train_x_cnn.shape}")
-
-        # Reshape each spectrum into (height, width, 1)
-        self.train_x_cnn = self.train_x_cnn.reshape(-1, height, width, 1)
-        print(f"Reshaped data: {self.train_x_cnn.shape}")
-
-        # Check the shape of the resulting arrays
-        print(f"Training data generated: {self.train_x.shape}, {self.train_y.shape}")
-        print(self.train_x[0], self.train_y)
 
     def save_train_data_to_file(self):
         """Save the generated training data to a .npz file."""
@@ -637,6 +630,7 @@ class App:
         self.update_shape_label()
 
 #----------------------NeuralNetworks------------------------------------
+
     def nn_combobox_selected(self, event):
         """Callback for when a neural network type is selected."""
         selection = self.nn_combobox.get()
@@ -661,12 +655,10 @@ class App:
             label = tk.Label(self.nn_parametrs, text=header, font=("Arial", 12, "bold"), bg="lightgray")
             label.grid(row=1, column=col, sticky="new", padx=2, pady=2)
 
-        unique_values, self.counts = np.unique(self.train_y, return_counts=True)
-        self.output_neurons = len(unique_values)
 
         # Create the table rows
         self.create_table_row(2, "Input layer", f"{self.train_x.shape[1]}", readonly=True)
-        self.first_hidden_layer = self.create_table_row(3, "First Hidden Layer", 16, input_type="int")
+        self.first_hidden_layer = self.create_table_row(3, "First Hidden Layer", 64, input_type="int")
         self.second_hidden_layer = self.create_table_row(4, "Second Hidden Layer", 32, input_type="int")
         self.output_layer = self.create_table_row(5, "Output Layer", f"{self.output_neurons}", readonly=True)
         self.epoch = self.create_table_row(6, "Epoch", 5, input_type="int")
@@ -675,42 +667,6 @@ class App:
         # Add a button to print the configuration
         submit_btn = tk.Button(self.nn_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
         submit_btn.grid(row=8, column=0, columnspan=2, pady=10)
-
-    def create_cnn_parameters(self):
-        # Create table headers
-        headers = ["Layer", "Configuration"]
-        self.nn_parametrs = tk.Label(self.right_label, font=("Arial", 12, "bold"))
-        self.nn_parametrs.grid(row=9, column=0, sticky="new")
-
-        for col, header in enumerate(headers):
-            label = tk.Label(self.nn_parametrs, text=header, font=("Arial", 12, "bold"), bg="lightgray")
-            label.grid(row=1, column=col, sticky="new", padx=2, pady=2)
-
-        unique_values, self.counts = np.unique(self.train_y, return_counts=True)
-        self.output_neurons = len(unique_values)
-
-        # Example usage with default values
-        self.create_table_row(2, "Input layer", f"{self.train_x_cnn.shape}", readonly=True)
-
-        # Predefine default values
-        default_filters = [16, 32, 32]
-        default_kernels = [3, 3, 3]
-        max_pool_default = min(3, min(self.train_x_cnn.shape[1], self.train_x_cnn.shape[2]))
-
-        self.first_layer = self.create_table_row(3, "First Conv. Layer", default_filters[0], input_type="int")
-        self.first_layer_kernel = self.create_table_row(4, "First Conv. Kernel", default_kernels[0], input_type="int")
-        self.second_layer = self.create_table_row(5, "Second Conv. Layer", default_filters[1], input_type="int")
-        self.second_layer_kernel = self.create_table_row(6, "Second Conv. Kernel", default_kernels[1], input_type="int")
-        self.third_layer = self.create_table_row(7, "Third Layer", default_filters[2], input_type="int")
-        self.max_pulling = self.create_table_row(8, "Max Pulling", max_pool_default, input_type="int")
-
-        self.output_layer = self.create_table_row(9, "Output Layer", f"{self.output_neurons}", readonly=True)
-        self.epoch = self.create_table_row(10, "Epoch", 5, input_type="int")
-        self.batch_size = self.create_table_row(11, "Batch Size", 1, input_type="int")
-
-        # Add a button to print the configuration
-        submit_btn = tk.Button(self.nn_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
-        submit_btn.grid(row=12, column=0, columnspan=2, pady=10)
 
     def validate_int(self, value):
         """
@@ -745,42 +701,38 @@ class App:
         return entry
 
     def make_nn_model(self):
+        """
+        Create and compile a neural network model based on the user's selection.
+        """
+        # Get user selections
         selection = self.nn_combobox.get()
-        self.batch_size_value = self.batch_size.get()
-        self.epoch_value = self.epoch.get()
+        self.batch_size_value = int(self.batch_size.get())
+        self.epoch_value = int(self.epoch.get())
 
         if selection == "Simple MLP":
+            # Ensure data is prepared for MLP
+            input_shape = self.train_x.shape[1]
             first_hidden = int(self.first_hidden_layer.get())
             second_hidden = int(self.second_hidden_layer.get())
-            self.model = NN.create_simple_mlp(self.train_x.shape[1],
-                                              int(self.first_hidden_layer.get()),
-                                              int(self.second_hidden_layer.get()),
-                                              self.output_neurons)
 
+            self.model = keras.Sequential()
+            self.model.add(Dense(first_hidden, input_dim=input_shape, activation='relu', kernel_regularizer=l2(0.001)))
+            self.model.add(Dropout(0.5))
+            self.model.add(Dense(second_hidden, activation='relu', kernel_regularizer=l2(0.001)))
+            self.model.add(Dropout(0.5))
+            self.model.add(Dense(self.output_neurons, activation='sigmoid'))
+            self.model.compile(optimizer='adam',
+                               loss='binary_crossentropy',
+                               # loss='sparse_categorical_crossentropy',
+                               # loss='categorical_crossentropy',
+                               metrics=['accuracy'])
+            print("MLP Model Created")
             print(self.model.summary())
 
-        elif selection == "CNN":
-            self.train_x = self.train_x_cnn
-            self.model = NN.create_cnn(self.train_x.shape[1:],
-                                      int(self.first_layer.get()),
-                                      int(self.first_layer_kernel.get()),
-                                      int(self.second_layer.get()),
-                                      int(self.second_layer_kernel.get()),
-                                      int(self.third_layer.get()),
-                                      int(self.max_pulling.get()),
-                                      self.output_neurons)
-            print(self.model.summary())
-
-        elif selection == "RNN":
-            model = self.create_rnn(input_shape=(100, 1), num_classes=10)
-        else:
-            self.summary_label.insert("1.0", "Invalid selection.\n")
-            return
-
+        # Clean up previous widgets and show model summary
         for widget in self.nn_parametrs.winfo_children():
             widget.destroy()
 
-            # Display model summary
         self.show_model_summary()
 
     def show_model_summary(self):
@@ -812,41 +764,42 @@ class App:
 
     def start_train_nn(self):
         """Start the training process with progress display."""
-        # try:
-        #     if self.model is None:
-        #         tk.messagebox.showerror("Error", "No model is initialized. Please build a model first.")
-        #         return
 
-            # # Create a new window to display training progress
-            # progress_window = tk.Toplevel(self.nn_parametrs)
-            # progress_window.title("Training Progress")
-            #
-            # # Create a text widget for progress logs
-            # text_widget = tk.Text(progress_window, wrap="word", font=("Courier", 10), width=60, height=15)
-            # text_widget.pack(fill="both", expand=True, padx=10, pady=10)
-            #
-            # # Initialize the callback for training progress
-            # progress_callback = TrainingProgressCallback(text_widget)
-            #
-            # # Train the model
+        if self.model is None:
+            tk.messagebox.showerror("Error", "No model is initialized. Please build a model first.")
+            return
+
+        # Create a new window to display training progress
+        progress_window = tk.Toplevel(self.nn_parametrs)
+        progress_window.title("Training Progress")
+
+        # Create a text widget for progress logs
+        text_widget = tk.Text(progress_window, wrap="word", font=("Courier", 10), width=60, height=15)
+        text_widget.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Initialize the callback for training progress
+        progress_callback = TrainingProgressCallback(text_widget)
+
+        self.train_x, val_x, self.train_y, val_y = train_test_split(self.train_x, self.train_y, test_size=0.2,
+                                                                    random_state=42)
+
+        # Train the model
         print(self.batch_size_value)
         print(self.epoch_value)
-        #self.stop_training_callback = StopTrainingCallback()  # Ensure the stop callback is available
+        self.stop_training_callback = StopTrainingCallback()  # Ensure the stop callback is available
         history = self.model.fit(
             self.train_x, self.train_y,
             batch_size=int(self.batch_size_value),
             epochs=int(self.epoch_value),
-            validation_split=0.1,
-           #callbacks=[self.stop_training_callback, progress_callback]
+            validation_data=(val_x, val_y),
+            callbacks=[self.stop_training_callback, progress_callback]
         )
 
-        #     # Notify training completion
-        #     tk.messagebox.showinfo("Training Complete", "The training process has been completed.")
-        #
-        #     # Plot loss after training
-        #    # self.plot_training_loss(history.history['loss'])
-        # except Exception as e:
-        #     tk.messagebox.showerror("Error", f"An error occurred during training:\n{str(e)}")
+        # Notify training completion
+        tk.messagebox.showinfo("Training Complete", "The training process has been completed.")
+
+        # Plot loss after training
+        self.plot_training_loss(history.history['loss'])
 
     def plot_training_loss(self, loss_history):
         """Plot the training loss history in a new window."""
@@ -863,7 +816,7 @@ class App:
 
 
         # Display the plot in a tkinter canvas
-        canvas = tk.Canvas(plot_window, width=800, height=600)
+        canvas = tk.Canvas(plot_window, width=600, height=300)
         canvas.pack(fill="both", expand=True)
 
         # Embed the Matplotlib figure in the Tkinter canvas
@@ -881,17 +834,65 @@ class App:
             tk.messagebox.showerror("Error", "Training cannot be stopped because it hasn't started yet.")
 
     def test_nn(self):
-        """Test the model on the validation/test dataset."""
-        try:
-            if self.model is None:
-                tk.messagebox.showerror("Error", "No model is initialized. Please build a model first.")
-                return
+        """Test the trained neural network on the entire spectral image."""
+        if self.model is None:
+            tk.messagebox.showerror("Error", "No model is trained yet. Train the model first.")
+            return
 
-            # Test logic
-            results = self.model.evaluate(self.test_x, self.test_y, verbose=0)
-            tk.messagebox.showinfo("Testing Results", f"Test results:\nLoss: {results[0]}\nAccuracy: {results[1]}")
-        except Exception as e:
-            tk.messagebox.showerror("Error", f"An error occurred during testing:\n{str(e)}")
+        # Convert spectral image to NumPy array
+        spectral_data = np.array(self.spec_image)  # Shape (height, width, num_bands)
+        print(f"spectral_data.shape: {spectral_data.shape}")
+
+        height, width, num_bands = spectral_data.shape
+
+        # Flatten spectral data: (height, width, num_bands) → (height * width, num_bands)
+        flattened_spectral_data = spectral_data.reshape(-1, num_bands)  # Shape: (total_pixels, num_bands)
+
+        # Normalize the spectral data
+        range_value = self.max_value - self.min_value
+        flattened_spectral_data = (flattened_spectral_data - self.min_value) / (range_value + 1e-10)
+
+        # Predict the class for each pixel
+        prediction = self.model.predict(flattened_spectral_data)  # Shape: (total_pixels, num_classes)
+        print(f"Testing Results Shape: {prediction.shape}")
+        print(f"Sample Predictions: {prediction[:5]}")
+
+        # Ensure predictions match expected size
+        expected_size = height * width
+        if prediction.shape[0] != expected_size:
+            print(f"Error: Expected {expected_size} predictions, but got {prediction.shape[0]}")
+            return
+
+        # Define color mapping for predicted classes
+        output_neurons = self.output_neurons
+        colors = [
+            (255, 0, 0),  # Red
+            (0, 255, 0),  # Green
+            (0, 0, 255),  # Blue
+            (255, 255, 0),  # Yellow
+            (255, 0, 255),  # Magenta
+            (0, 255, 255)  # Cyan
+        ]
+        colors = colors[:output_neurons]  # Adjust based on the number of classes
+
+        # Reshape prediction back to (height, width, num_classes)
+        prediction = prediction.reshape(height, width, output_neurons)
+
+        # Create an RGB image for visualization
+        # self.rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
+
+        for y in range(height):
+            for x in range(width):
+                # Find the predicted class with the highest probability
+                max_value_index = np.argmax(prediction[y, x])
+                max_value = prediction[y, x, max_value_index]
+
+                # If the highest probability is greater than 0.8, assign the corresponding color
+                if max_value > 0.8:
+                    self.rgb_image[y, x] = colors[max_value_index]
+
+        # Display the classified image
+        self.display_image()
 
     def save_nn(self):
         """Save the trained model to disk."""
@@ -910,7 +911,6 @@ class App:
                 tk.messagebox.showinfo("Model Saved", f"Model has been saved to:\n{file_path}")
         except Exception as e:
             tk.messagebox.showerror("Error", f"An error occurred during saving:\n{str(e)}")
-
 
 class StopTrainingCallback(tensorflow.keras.callbacks.Callback):
     """Callback to stop training."""
@@ -933,63 +933,6 @@ class TrainingProgressCallback(tf.keras.callbacks.Callback):
         message = f"Epoch {epoch + 1}, Loss: {logs['loss']:.4f}, Accuracy: {logs.get('accuracy', 0):.4f}\n"
         self.text_widget.insert("end", message)
         self.text_widget.see("end")  # Scroll to the latest log
-
-class NN:
-    def create_simple_mlp(input_shape, first_layer, second_layer, output_layer):
-        """Create a simple multi-layer perceptron (MLP) model."""
-        # Ensure input_shape is a tuple
-        if isinstance(input_shape, int):
-            input_shape = (input_shape,)  # Convert single integer to tuple
-        model = models.Sequential([
-            layers.Input(input_shape,),
-            layers.Dense(first_layer, activation='relu'),
-            layers.Dense(second_layer, activation='relu'),
-            layers.Dense(output_layer, activation='softmax')
-        ])
-        model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-        return model
-
-    def create_cnn(input_shape, first_layer, first_layer_kernel, second_layer, second_layer_kernel, third_layer,
-                   max_pulling, output_neurons):
-        model = models.Sequential()
-
-        # First Convolutional Layer
-        model.add(layers.Conv2D(filters=first_layer, kernel_size=(first_layer_kernel, first_layer_kernel),
-                                activation='relu', input_shape=input_shape))
-        # Dynamically adjust MaxPooling kernel size
-        pool_height = min(max_pulling, model.output_shape[1])
-        pool_width = min(max_pulling, model.output_shape[2])
-
-        model.add(layers.MaxPooling2D(pool_size=(pool_height, pool_width)))
-
-        # Second Convolutional Layer
-        model.add(layers.Conv2D(filters=second_layer, kernel_size=(second_layer_kernel, second_layer_kernel),
-                                activation='relu'))
-        # Dynamically adjust MaxPooling kernel size
-        pool_height = min(max_pulling, model.output_shape[1])
-        pool_width = min(max_pulling, model.output_shape[2])
-
-        model.add(layers.MaxPooling2D(pool_size=(pool_height, pool_width)))
-
-        # Flatten and Fully Connected Layers
-        model.add(layers.Flatten())
-        model.add(layers.Dense(third_layer, activation='relu'))
-        model.add(layers.Dense(output_neurons, activation='softmax'))
-
-        model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-        return model
-
-    #
-    # def create_rnn(self, input_shape=(100, 1), num_classes=10):
-    #     """Create a recurrent neural network (RNN) model."""
-    #     model = models.Sequential([
-    #         layers.Input(shape=input_shape),
-    #         layers.SimpleRNN(64, activation='relu', return_sequences=True),
-    #         layers.SimpleRNN(64, activation='relu'),
-    #         layers.Dense(num_classes, activation='softmax')
-    #     ])
-    #     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    #     return model
 
 if __name__ == "__main__":
     root = tk.Tk()
