@@ -1,22 +1,38 @@
-import tensorflow as tf
 import numpy as np
+import matplotlib.pyplot as plt
 
-# Example data
-n_samples = 1000  # Number of spectra
-spectrum_length = 50  # Length of each spectrum
 
-# Create train_x (1000 spectra, each with 50 values between 0 and 1)
-train_x = np.random.rand(n_samples, spectrum_length).astype(np.float32)
-print(train_x[1])
+# Load the .npz file
+data = np.load("222.npz")
 
-# Create train_y (1000 labels, each a value between 0 and 50)
-train_y = np.random.randint(0, 51, size=(n_samples,), dtype=np.int32)
+# List all arrays stored in the file
+print(data.files)
+
+# Access a specific array by name
+array_name = data.files[0]  # Example: Get the first array name
+array_data = data[array_name]
+
+train_x = data["train_x"]
+train_y = data["train_y"]
+
+
+
+# Print or use the array
+print(array_data.shape)
+print(array_data)
+print(train_x)
 print(train_y)
 
-# Create the dataset
-dataset = tf.data.Dataset.from_tensor_slices((train_x, train_y))
+num_samples, num_bands = train_x.shape
 
-# Inspect the dataset
-for x, y in dataset.take(1):
-    print("Spectrum (train_x):", x)
-    print("Label (train_y):", y)
+# Plot all spectra
+plt.figure(figsize=(10, 6))
+
+for i in range(num_samples):
+    plt.plot(range(num_bands), train_x[i], alpha=0.5)  # alpha for transparency
+
+# Labels and title
+plt.xlabel("Spectral Band")
+plt.ylabel("Reflectance / Intensity")
+plt.title("Spectral Signatures of Training Samples")
+plt.show()

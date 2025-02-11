@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from tensorflow.python.keras.utils.np_utils import to_categorical
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-
+from tensorflow.python.ops.numpy_ops.np_dtypes import float32
 
 
 # import pandas as pd
@@ -44,7 +44,11 @@ class App:
         self.open_file_button.pack(side="left", padx=0, pady=0)
 
         # Bind the resize event and mouse motion
-        self.toggle_button = tk.Button(self.top_menu, text="Toggle Magnifying Glass", command=self.toggle_magnifier)
+        self.toggle_button = tk.Button(self.top_menu, text="Magnifying Glass", command=self.toggle_magnifier)
+        self.toggle_button.pack(pady=0, side='left')
+
+        # Clear RGB image
+        self.toggle_button = tk.Button(self.top_menu, text="Clear RGB", command=self.clear_rgb_image)
         self.toggle_button.pack(pady=0, side='left')
 
         # Image display-----------------------------------------------------------------------------------------------
@@ -97,29 +101,21 @@ class App:
         self.delete_button = tk.Button(self.right_label, text="Clear train data", command=self.clear_train_data)
         self.delete_button.grid(row=5, column=0, sticky="nwe")
 
-        # self.edit_button = tk.Button(self.right_label, text="Edit Selected", command=self.edit_rectangle)
-        # self.edit_button.pack(fill=tk.X)
-
         # Label to display train_x and train_y shapes
         self.train_shape_label = tk.Label(self.right_label, text="train_x: N/A, train_y: N/A", font=("Arial", 12))
         self.train_shape_label.grid(row=6, column=0, sticky="nwe")
 
-        #-------------------------------Neural Networks----------------------------------------
-        self.nn_combobox = ttk.Combobox(self.right_label, values=["Simple MLP", "CNN", "RNN"], font=("Arial", 12), state='readonly')
-        self.nn_combobox.grid(row=7, column=0, sticky="nwe")
-        self.nn_combobox.bind("<<ComboboxSelected>>", self.nn_combobox_selected)
-
-        self.nn_parameters = tk.Label(self.right_label)
-        self.nn_parameters.grid(row=8, column=0, sticky="nwe")
-
-        self.start_train = tk.Button(self.right_label, text="Start train", command=self.start_train_nn)
-        self.start_train.grid(row=14, column=0, sticky="new")
-        self.stop_train = tk.Button(self.right_label, text="Stop train", command=self.stop_train_nn)
-        self.stop_train.grid(row=15, column=0, sticky="new")
-        self.test = tk.Button(self.right_label, text="Test", command=self.test_nn)
-        self.test.grid(row=16, column=0, sticky="new")
-        self.save_nn = tk.Button(self.right_label, text="Save", command=self.save_nn)
-        self.save_nn.grid(row=17, column=0, sticky="new")
+        # self.nn_parameters = tk.Label(self.right_label)
+        # self.nn_parameters.grid(row=8, column=0, sticky="nwe")
+        #
+        # self.start_train = tk.Button(self.right_label, text="Start train", command=self.start_train_nn)
+        # self.start_train.grid(row=14, column=0, sticky="new")
+        # self.stop_train = tk.Button(self.right_label, text="Stop train", command=self.stop_train_nn)
+        # self.stop_train.grid(row=15, column=0, sticky="new")
+        # self.test = tk.Button(self.right_label, text="Test", command=self.test_nn)
+        # self.test.grid(row=16, column=0, sticky="new")
+        # self.save_nn = tk.Button(self.right_label, text="Save", command=self.save_nn)
+        # self.save_nn.grid(row=17, column=0, sticky="new")
 
         # Variables
         self.spec_image = None
@@ -233,6 +229,22 @@ class App:
             scaled_x2 = orig_x2 * self.scale_x
             scaled_y2 = orig_y2 * self.scale_y
             self.label_image.create_rectangle(scaled_x1, scaled_y1, scaled_x2, scaled_y2, outline=color, width=2)
+
+    def clear_rgb_image(self):
+        bands = self.spec_image_info['default bands']
+        rgb_image = np.zeros((self.spec_image_info["lines"], self.spec_image_info["samples"], 3), dtype=np.float32)
+        for i, band_index in enumerate(bands):
+            band_data = np.squeeze(
+                self.spec_image[:, :, band_index])  # Extract and squeeze band data to ensure 2D shape
+            max_value = np.amax(band_data)  # Get the maximum value for normalization
+
+            # Avoid division by zero
+            if max_value > 0:
+                rgb_image[:, :, i] = band_data / max_value
+
+        # Scale to 0-255 range and convert to uint8 for display
+        self.rgb_image = (rgb_image * 255).astype(np.uint8)
+        self.display_image()
 
     def start_draw(self, event):
         """Start drawing a rectangle."""
@@ -562,6 +574,7 @@ class App:
         print(f"MLP data prepared: {self.train_x.shape}, {self.train_y.shape}")
 
         self.update_shape_label()
+        self.create_simple_mlp_parameters()
 
     def save_train_data_to_file(self):
         """Save the generated training data to a .npz file."""
@@ -631,20 +644,6 @@ class App:
 
 #----------------------NeuralNetworks------------------------------------
 
-    def nn_combobox_selected(self, event):
-        """Callback for when a neural network type is selected."""
-        selection = self.nn_combobox.get()
-
-        if selection == "Simple MLP":
-            model = self.create_simple_mlp_parameters()
-        elif selection == "CNN":
-            model = self.create_cnn_parameters()
-        elif selection == "RNN":
-            model = self.create_rnn(input_shape=(100, 1), num_classes=10)
-        else:
-            self.summary_label.insert("1.0", "Invalid selection.\n")
-            return
-
     def create_simple_mlp_parameters(self):
         # Create table headers
         headers = ["Layer", "Configuration"]
@@ -660,13 +659,25 @@ class App:
         self.create_table_row(2, "Input layer", f"{self.train_x.shape[1]}", readonly=True)
         self.first_hidden_layer = self.create_table_row(3, "First Hidden Layer", 64, input_type="int")
         self.second_hidden_layer = self.create_table_row(4, "Second Hidden Layer", 32, input_type="int")
-        self.output_layer = self.create_table_row(5, "Output Layer", f"{self.output_neurons}", readonly=True)
-        self.epoch = self.create_table_row(6, "Epoch", 5, input_type="int")
-        self.batch_size = self.create_table_row(7, "Batch size", 1, input_type="int")
+        self.therd_hidden_layer = self.create_table_row(5, "Second Hidden Layer", 0, input_type="int")
+        self.output_layer = self.create_table_row(6, "Output Layer", f"{self.output_neurons}", readonly=True)
+        self.epoch = self.create_table_row(7, "Epoch", 20, input_type="int")
+        self.batch_size = self.create_table_row(8, "Batch size", 32, input_type="int")
+        self.dropout = self.create_table_row(9, "Dropout", 0.5, input_type="float")
+        self.kernel_regularizer = self.create_table_row(10, "Kernel regularizer", 0.001, input_type="float")
 
         # Add a button to print the configuration
         submit_btn = tk.Button(self.nn_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
-        submit_btn.grid(row=8, column=0, columnspan=2, pady=10)
+        submit_btn.grid(row=11, column=0, columnspan=2, pady=10)
+
+        self.start_train = tk.Button(self.right_label, text="Start train", command=self.start_train_nn)
+        self.start_train.grid(row=14, column=0, sticky="new")
+        self.stop_train = tk.Button(self.right_label, text="Stop train", command=self.stop_train_nn)
+        self.stop_train.grid(row=15, column=0, sticky="new")
+        self.test = tk.Button(self.right_label, text="Test", command=self.test_nn)
+        self.test.grid(row=16, column=0, sticky="new")
+        self.save_nn = tk.Button(self.right_label, text="Save", command=self.save_nn)
+        self.save_nn.grid(row=17, column=0, sticky="new")
 
     def validate_int(self, value):
         """
@@ -701,33 +712,39 @@ class App:
         return entry
 
     def make_nn_model(self):
-        """
-        Create and compile a neural network model based on the user's selection.
-        """
-        # Get user selections
-        selection = self.nn_combobox.get()
+
         self.batch_size_value = int(self.batch_size.get())
         self.epoch_value = int(self.epoch.get())
 
-        if selection == "Simple MLP":
-            # Ensure data is prepared for MLP
-            input_shape = self.train_x.shape[1]
-            first_hidden = int(self.first_hidden_layer.get())
-            second_hidden = int(self.second_hidden_layer.get())
+        # Ensure data is prepared for MLP
+        input_shape = self.train_x.shape[1]
+        first_hidden = int(self.first_hidden_layer.get())
+        second_hidden = int(self.second_hidden_layer.get())
+        third_hidden = int(self.therd_hidden_layer.get())
+        dropout = float(self.dropout.get())
+        kernel_regularizer = float(self.kernel_regularizer.get())
+        print(dropout, kernel_regularizer)
 
-            self.model = keras.Sequential()
-            self.model.add(Dense(first_hidden, input_dim=input_shape, activation='relu', kernel_regularizer=l2(0.001)))
-            self.model.add(Dropout(0.5))
-            self.model.add(Dense(second_hidden, activation='relu', kernel_regularizer=l2(0.001)))
-            self.model.add(Dropout(0.5))
-            self.model.add(Dense(self.output_neurons, activation='sigmoid'))
-            self.model.compile(optimizer='adam',
-                               loss='binary_crossentropy',
-                               # loss='sparse_categorical_crossentropy',
-                               # loss='categorical_crossentropy',
-                               metrics=['accuracy'])
-            print("MLP Model Created")
-            print(self.model.summary())
+        self.model = keras.Sequential()
+        self.model.add(Dense(first_hidden, input_dim=input_shape, activation='relu', kernel_regularizer=l2(kernel_regularizer)))
+        if dropout > 0:
+            self.model.add(Dropout(dropout))
+        self.model.add(Dense(second_hidden, activation='relu', kernel_regularizer=l2(kernel_regularizer)))
+        if dropout > 0:
+            self.model.add(Dropout(dropout))
+        if third_hidden > 0:
+            self.model.add(Dense(third_hidden, activation='relu', kernel_regularizer=l2(kernel_regularizer)))
+        if dropout > 0:
+            self.model.add(Dropout(dropout))
+
+        self.model.add(Dense(self.output_neurons, activation='sigmoid'))
+        self.model.compile(optimizer='adam',
+                           loss='binary_crossentropy',
+                           # loss='sparse_categorical_crossentropy',
+                           # loss='categorical_crossentropy',
+                           metrics=['accuracy'])
+        print("MLP Model Created")
+        print(self.model.summary())
 
         # Clean up previous widgets and show model summary
         for widget in self.nn_parametrs.winfo_children():
@@ -760,7 +777,7 @@ class App:
         """Reset the UI to the initial state for parameter entry."""
         for widget in self.nn_parametrs.winfo_children():
             widget.destroy()
-        # self.create_simple_mlp_parameters()  # Or `self.create_cnn_parameters()` depending on the selection
+        self.create_simple_mlp_parameters()  # Or `self.create_cnn_parameters()` depending on the selection
 
     def start_train_nn(self):
         """Start the training process with progress display."""
@@ -816,7 +833,7 @@ class App:
 
 
         # Display the plot in a tkinter canvas
-        canvas = tk.Canvas(plot_window, width=600, height=300)
+        canvas = tk.Canvas(plot_window, width=300, height=300)
         canvas.pack(fill="both", expand=True)
 
         # Embed the Matplotlib figure in the Tkinter canvas
