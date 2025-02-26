@@ -8,8 +8,12 @@ from tensorflow.python.keras.saving.saved_model.save_impl import input_layer
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers, models, callbacks
-from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Flatten, BatchNormalization, GlobalAveragePooling2D
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+import tensorflow.keras.utils as keras_utils
 from tensorflow.keras.regularizers import l2
+from tensorflow.keras.optimizers import Adam
 import matplotlib.pyplot as plt
 from tensorflow.python.keras.utils.np_utils import to_categorical
 from sklearn.model_selection import train_test_split
@@ -51,6 +55,15 @@ class App:
         self.toggle_button = tk.Button(self.top_menu, text="Clear RGB", command=self.clear_rgb_image)
         self.toggle_button.pack(pady=0, side='left')
 
+        # Increase brightness RGB image
+        self.toggle_button = tk.Button(self.top_menu, text="Increase brightness", command=self.increase_brightness)
+        self.toggle_button.pack(pady=0, side='left')
+
+
+        # Save RGB image
+        self.toggle_button = tk.Button(self.top_menu, text="Save RGB", command=self.save_rgb_image)
+        self.toggle_button.pack(pady=0, side='left')
+
         # Image display-----------------------------------------------------------------------------------------------
         self.label_image = tk.Canvas(self.frame, bg="white")
         self.label_image.grid(row=1, column=0, sticky="news")
@@ -85,37 +98,38 @@ class App:
         self.delete_button = tk.Button(self.right_label, text="Delete Selected", command=self.delete_rectangle)
         self.delete_button.grid(row=1, column=0, sticky="nwe")
 
-        # Button save preparing data
-        self.delete_button = tk.Button(self.right_label, text="Save train data", command=self.save_train_data)
+        # Button save preparing data MLP
+        self.delete_button = tk.Button(self.right_label, text="Save train data MLP", command=self.save_train_data)
         self.delete_button.grid(row=2, column=0, sticky="nwe")
+
+
+        self.patch = tk.Label(self.right_label, text="Patch size", font=("Arial", 12))
+        self.patch.grid(row=3, column=0, sticky="w", padx=0, pady=0)
+        self.patch_value = ttk.Entry(self.right_label, font=("Arial", 12))
+        self.patch_value.grid(row=3, column=0, sticky="nse", padx=0, pady=0)
+        self.patch_value.delete(0, tk.END)  # Clear any existing value
+        self.patch_value.insert(0, str(3))  # Insert the provided default value as a string
+        self.patch_value.config(validate="key", validatecommand=(self.root.register(self.validate_int), "%P"))
+
+        # Button save preparing data CNN
+        self.delete_button = tk.Button(self.right_label, text="Save train data CNN", command=self.save_train_data_cnn)
+        self.delete_button.grid(row=4, column=0, sticky="nwe")
 
         # Button save preparing data to file
         self.delete_button = tk.Button(self.right_label, text="Save train data to file", command=self.save_train_data_to_file)
-        self.delete_button.grid(row=3, column=0, sticky="nwe")
+        self.delete_button.grid(row=5, column=0, sticky="nwe")
 
         # Button load preparing data to file
         self.delete_button = tk.Button(self.right_label, text="Load train data", command=self.load_train_data)
-        self.delete_button.grid(row=4, column=0, sticky="nwe")
+        self.delete_button.grid(row=6, column=0, sticky="nwe")
 
         # Button clear preparing data to file
         self.delete_button = tk.Button(self.right_label, text="Clear train data", command=self.clear_train_data)
-        self.delete_button.grid(row=5, column=0, sticky="nwe")
+        self.delete_button.grid(row=7, column=0, sticky="nwe")
 
         # Label to display train_x and train_y shapes
         self.train_shape_label = tk.Label(self.right_label, text="train_x: N/A, train_y: N/A", font=("Arial", 12))
-        self.train_shape_label.grid(row=6, column=0, sticky="nwe")
-
-        # self.nn_parameters = tk.Label(self.right_label)
-        # self.nn_parameters.grid(row=8, column=0, sticky="nwe")
-        #
-        # self.start_train = tk.Button(self.right_label, text="Start train", command=self.start_train_nn)
-        # self.start_train.grid(row=14, column=0, sticky="new")
-        # self.stop_train = tk.Button(self.right_label, text="Stop train", command=self.stop_train_nn)
-        # self.stop_train.grid(row=15, column=0, sticky="new")
-        # self.test = tk.Button(self.right_label, text="Test", command=self.test_nn)
-        # self.test.grid(row=16, column=0, sticky="new")
-        # self.save_nn = tk.Button(self.right_label, text="Save", command=self.save_nn)
-        # self.save_nn.grid(row=17, column=0, sticky="new")
+        self.train_shape_label.grid(row=8, column=0, sticky="nwe")
 
         # Variables
         self.spec_image = None
@@ -136,6 +150,7 @@ class App:
         self.max_value = None
         self.min_value = None
         self.dataset = None
+        self.patch_size = 5
 
         # Rectangle
         self.label_image.bind("<ButtonPress-1>", self.start_draw)
@@ -154,11 +169,32 @@ class App:
             # Extract the metadata dictionary
             metadata = self.spec_image.metadata
 
-            default_bands = metadata.get("default bands", [])
-            if default_bands:
-                default_bands = [int(band) for band in default_bands]
+            # Extract or compute wavelengths
+            wavelengths = metadata.get("wavelength", [])
+            if isinstance(wavelengths, list) and len(wavelengths) == 1 and isinstance(wavelengths[0], str):
+                wavelengths = [float(w) for w in wavelengths[0].splitlines()]
+            elif isinstance(wavelengths, list):
+                wavelengths = [float(w) for w in wavelengths]
 
-            # Extract relevant metadata fields
+            metadata["wavelengths"] = wavelengths
+
+            # Determine default bands
+            target_value = 430
+            val1 = min(enumerate(metadata["wavelengths"]), key=lambda x: abs(x[1] - target_value))
+            val1_idx = val1[0]  # Extract the index
+
+            val2 = min(enumerate(metadata["wavelengths"]),
+                       key=lambda x: abs(x[1] - (metadata["wavelengths"][val1_idx] + 100)))
+            val2_idx = val2[0]  # Extract the index
+
+            val3 = min(enumerate(metadata["wavelengths"]),
+                       key=lambda x: abs(x[1] - (metadata["wavelengths"][val1_idx] + 200)))
+            val3_idx = val3[0]  # Extract the index
+
+            default_bands = [val1, val2, val3]
+            metadata["default bands"] = [default_bands[0][0],default_bands[1][0],default_bands[2][0]]
+
+            default_bands = metadata.get("default bands", [])
             self.spec_image_info = {
                 "samples": int(metadata.get("samples", 0)),
                 "bands": int(metadata.get("bands", 0)),
@@ -177,16 +213,18 @@ class App:
 
 
             bands = self.spec_image_info['default bands']
+            print(self.spec_image_info['default bands'])
             rgb_image = np.zeros((self.spec_image_info["lines"], self.spec_image_info["samples"], 3), dtype=np.float32)
             for i, band_index in enumerate(bands):
                 band_data = np.squeeze(self.spec_image[:, :, band_index])  # Extract and squeeze band data to ensure 2D shape
                 max_value = np.amax(band_data)  # Get the maximum value for normalization
 
                 # Avoid division by zero
-                if max_value > 0:
-                    rgb_image[:, :, i] = band_data / max_value
+
+                rgb_image[:, :, i] = band_data / max_value
 
             # Scale to 0-255 range and convert to uint8 for display
+
             self.rgb_image = (rgb_image * 255).astype(np.uint8)
             self.display_image()
 
@@ -229,6 +267,35 @@ class App:
             scaled_x2 = orig_x2 * self.scale_x
             scaled_y2 = orig_y2 * self.scale_y
             self.label_image.create_rectangle(scaled_x1, scaled_y1, scaled_x2, scaled_y2, outline=color, width=2)
+
+    def save_rgb_image(self):
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG Image", "*.png"), ("JPEG Image", "*.jpg"), ("All Files", "*.*")],
+            title="Save RGB Image As"
+        )
+        if not file_path:  # User canceled the save dialog
+            print("Save operation canceled.")
+            return
+        if self.rgb_image is None:
+            print("No spectral image loaded!")
+            return
+
+        # # Extract the selected bands (assuming bands are in [0, num_bands-1] range)
+        # rgb_image = self.spec_image[:, :, bands]
+        #
+        # # Normalize to 0-255 for visualization
+        # rgb_image = (rgb_image - rgb_image.min()) / (rgb_image.max() - rgb_image.min()) * 255
+        # rgb_image = np.clip(rgb_image, 0, 255).astype(np.uint8)
+
+        # Convert to PIL image and save
+        img = Image.fromarray(self.rgb_image)
+        img.save(file_path)
+        print(f"RGB image saved as {file_path}")
+        
+    def increase_brightness(self):
+        self.rgb_image *= 2
+        self.display_image()
 
     def clear_rgb_image(self):
         bands = self.spec_image_info['default bands']
@@ -273,14 +340,14 @@ class App:
             if color:
                 self.label_image.itemconfig(self.current_rectangle, outline=color)
                 self.rectangles.append((orig_x1, orig_y1, orig_x2, orig_y2, color, 0))  # Store in original space
-                self.rect_table.insert("", "end", values=(orig_x1, orig_y1, orig_x2, orig_y2, "", 0))
-                iid = self.rect_table.get_children()  # First row
-                if len(iid) > 0:
-                    last_iid = iid[-1]
-                else:
-                    last_iid = iid[0]
 
-                self.set_treeview_cell_color(self.rect_table, last_iid, colnum=4, bg_color=color)
+                # Create a tag for this color
+                tag_name = f"color_{color.replace('#', '')}"  # Unique tag based on color
+                self.rect_table.tag_configure(tag_name, background=color)  # Set background color
+
+                # Insert the row with the tag
+                self.rect_table.insert("", "end", values=(orig_x1, orig_y1, orig_x2, orig_y2, color, 0),
+                                       tags=(tag_name,))
             else:
                 self.label_image.delete(self.current_rectangle)
             self.current_rectangle = None
@@ -576,6 +643,76 @@ class App:
         self.update_shape_label()
         self.create_simple_mlp_parameters()
 
+    def save_train_data_cnn(self):
+        """Generate training data for CNN from the rectangles and spec_image."""
+        self.train_x = []
+        self.train_y = []
+
+        if self.spec_image is None:
+            print("No spectral image loaded!")
+            return
+
+        self.patch_size = int(self.patch_value.get())  # CNN requires (3,3) patches
+        pad_size = self.patch_size // 2  # Padding size to extract 3×3 patches
+
+        # Pad the spectral image to handle edge cases
+        padded_spec_image = np.pad(self.spec_image,
+                                   ((pad_size, pad_size), (pad_size, pad_size), (0, 0)),
+                                   mode='reflect')
+
+        for (x1, y1, x2, y2, color, data) in self.rectangles:
+            for i in range(y1, y2):
+                for j in range(x1, x2):
+                    # Extract 3x3 patch centered at (i, j)
+                    patch = padded_spec_image[i:i + self.patch_size, j:j + self.patch_size, :]
+
+                    if patch.shape == (self.patch_size, self.patch_size, self.spec_image.shape[2]):  # Ensure correct shape
+                        self.train_x.append(patch)
+                        self.train_y.append(data)
+
+        # Convert lists to numpy arrays
+        self.train_x = np.array(self.train_x)  # Shape: (num_samples, 3, 3, num_bands)
+        self.train_y = np.array(self.train_y)  # Shape: (num_samples,)
+
+        # Check if data exists
+        if len(self.train_x) == 0 or len(self.train_y) == 0:
+            print("Error: No valid training samples found! Please check input data.")
+            return
+
+        # **Remove `data == 0` samples only if 0 is unclassified**
+        valid_indices = np.where(self.train_y != 0)[0]
+        if len(valid_indices) == 0:
+            print("Error: All samples were removed during filtering (data == 0).")
+            return
+
+        self.train_x = self.train_x[valid_indices]
+        self.train_y = self.train_y[valid_indices]
+
+        # **Normalize `train_x`**
+        range_value = self.max_value - self.min_value
+        if range_value == 0:
+            print("Warning: max_value and min_value are the same, normalization will fail!")
+            range_value = 1  # Avoid division by zero
+
+        self.train_x = (self.train_x - self.min_value) / (range_value + 1e-10)
+
+        # **Encode labels properly**
+        label_encoder = LabelEncoder()
+        self.train_y = label_encoder.fit_transform(self.train_y)
+        self.output_neurons = len(label_encoder.classes_)
+
+        # Ensure output neurons are valid before one-hot encoding
+        if self.output_neurons == 0:
+            print("Error: No unique labels found after encoding!")
+            return
+
+        self.train_y = to_categorical(self.train_y, num_classes=self.output_neurons)
+
+        print(f"CNN data prepared: {self.train_x.shape}, {self.train_y.shape}")
+
+        self.update_shape_label()
+        self.create_cnn_parameters()  # Call CNN-specific model setup
+
     def save_train_data_to_file(self):
         """Save the generated training data to a .npz file."""
         if not hasattr(self, 'train_x') or not hasattr(self, 'train_y'):
@@ -632,6 +769,9 @@ class App:
         except Exception as e:
             print(f"Error loading training data: {e}")
 
+        self.update_shape_label()
+        self.create_simple_mlp_parameters()
+
     def clear_train_data(self):
         """Clear the training data."""
         if hasattr(self, 'train_x') or hasattr(self, 'train_y'):
@@ -642,7 +782,11 @@ class App:
             print("No training data to clear.")
         self.update_shape_label()
 
-#----------------------NeuralNetworks------------------------------------
+    def hex_to_rgb(self,hex_color):
+        hex_color = hex_color.lstrip("#")  # Remove '#' if present
+        return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+
+    #----------------------NeuralNetworks------------------------------------
 
     def create_simple_mlp_parameters(self):
         # Create table headers
@@ -659,7 +803,7 @@ class App:
         self.create_table_row(2, "Input layer", f"{self.train_x.shape[1]}", readonly=True)
         self.first_hidden_layer = self.create_table_row(3, "First Hidden Layer", 64, input_type="int")
         self.second_hidden_layer = self.create_table_row(4, "Second Hidden Layer", 32, input_type="int")
-        self.therd_hidden_layer = self.create_table_row(5, "Second Hidden Layer", 0, input_type="int")
+        self.therd_hidden_layer = self.create_table_row(5, "Third Hidden Layer", 0, input_type="int")
         self.output_layer = self.create_table_row(6, "Output Layer", f"{self.output_neurons}", readonly=True)
         self.epoch = self.create_table_row(7, "Epoch", 20, input_type="int")
         self.batch_size = self.create_table_row(8, "Batch size", 32, input_type="int")
@@ -729,15 +873,17 @@ class App:
         self.model.add(Dense(first_hidden, input_dim=input_shape, activation='relu', kernel_regularizer=l2(kernel_regularizer)))
         if dropout > 0:
             self.model.add(Dropout(dropout))
-        self.model.add(Dense(second_hidden, activation='relu', kernel_regularizer=l2(kernel_regularizer)))
-        if dropout > 0:
-            self.model.add(Dropout(dropout))
+        if second_hidden > 0:
+            self.model.add(Dense(second_hidden, activation='relu', kernel_regularizer=l2(kernel_regularizer)))
+            if dropout > 0:
+                self.model.add(Dropout(dropout))
         if third_hidden > 0:
             self.model.add(Dense(third_hidden, activation='relu', kernel_regularizer=l2(kernel_regularizer)))
-        if dropout > 0:
-            self.model.add(Dropout(dropout))
+            if dropout > 0:
+                self.model.add(Dropout(dropout))
 
         self.model.add(Dense(self.output_neurons, activation='sigmoid'))
+        # self.model.add(Dense(self.output_neurons, activation='softmax'))
         self.model.compile(optimizer='adam',
                            loss='binary_crossentropy',
                            # loss='sparse_categorical_crossentropy',
@@ -759,7 +905,7 @@ class App:
         summary_label.grid(row=9, column=0, sticky="nsew", padx=0, pady=0)
 
         # Create a text box to hold the model summary
-        summary_text = tk.Text(self.nn_parametrs, wrap="word", font=("Courier", 10), width=40, height=30)
+        summary_text = tk.Text(self.nn_parametrs, wrap="word", font=("Courier", 10), width=45, height=30)
         summary_text.grid(sticky="nsew", padx=0, pady=0)
 
         # Fetch model summary and insert it into the text box
@@ -773,11 +919,116 @@ class App:
         reset_btn = tk.Button(self.nn_parametrs, text="Reset", command=self.reset_ui, font=("Arial", 12))
         reset_btn.grid(row=1, pady=10, sticky="ns")
 
+    def create_cnn_parameters(self):
+        """Create UI elements for CNN model configuration."""
+
+        # Create table headers
+        headers = ["Layer", "Configuration"]
+        self.nn_parametrs = tk.Label(self.right_label, font=("Arial", 12, "bold"))
+        self.nn_parametrs.grid(row=9, column=0, sticky="new")
+
+        for col, header in enumerate(headers):
+            label = tk.Label(self.nn_parametrs, text=header, font=("Arial", 12, "bold"), bg="lightgray")
+            label.grid(row=1, column=col, sticky="new", padx=2, pady=2)
+
+        # Create CNN parameter input fields
+        self.create_table_row(2, "Input Shape", f"({self.patch_size},{self.patch_size},"
+                                                f"{self.train_x.shape[-1]})", readonly=True)
+        self.conv1_filters = self.create_table_row(3, "Conv Layer 1 Filters", 32, input_type="int")
+        self.conv2_filters = self.create_table_row(4, "Conv Layer 2 Filters", 64, input_type="int")
+        self.conv3_filters = self.create_table_row(5, "Conv Layer 3 Filters", 128, input_type="int")
+        self.pool_size = self.create_table_row(6, "Pooling Size", 2, input_type="int")
+        self.dense_units = self.create_table_row(7, "Dense Layer Units", 128, input_type="int")
+        self.output_layer = self.create_table_row(8, "Output Layer", f"{self.output_neurons}", readonly=True)
+        self.epochs = self.create_table_row(9, "Epochs", 20, input_type="int")
+        self.batch_size = self.create_table_row(10, "Batch Size", 32, input_type="int")
+        self.dropout = self.create_table_row(11, "Dropout", 0.5, input_type="float")
+        self.kernel_regularizer = self.create_table_row(12, "Kernel Regularizer", 0.001, input_type="float")
+
+        # Submit button
+        submit_btn = tk.Button(self.nn_parametrs, text="Submit", command=self.make_cnn_model, font=("Arial", 12))
+        submit_btn.grid(row=13, column=0, columnspan=2, pady=10)
+
+        # Training buttons
+        self.start_train = tk.Button(self.right_label, text="Start Train", command=self.start_train_cnn)
+        self.start_train.grid(row=14, column=0, sticky="new")
+        self.test = tk.Button(self.right_label, text="Test", command=self.test_cnn)
+        self.test.grid(row=16, column=0, sticky="new")
+        self.save_cnn = tk.Button(self.right_label, text="Save", command=self.save_cnn)
+        self.save_cnn.grid(row=17, column=0, sticky="new")
+
+    def make_cnn_model(self):
+        """Create CNN model based on user-defined parameters."""
+
+        self.batch_size_value = int(self.batch_size.get())
+        self.epoch_value = int(self.epochs.get())
+
+        # Extract values from UI
+        input_shape = (self.patch_size, self.patch_size, self.train_x.shape[-1])  # (3,3,num_bands)
+        conv1_filters = int(self.conv1_filters.get())
+        conv2_filters = int(self.conv2_filters.get())
+        conv3_filters = int(self.conv3_filters.get())
+        pool_size = int(self.pool_size.get())
+        dense_units = int(self.dense_units.get())
+        dropout = float(self.dropout.get())
+        kernel_regularizer = float(self.kernel_regularizer.get())
+
+        # Build CNN model
+        self.model = Sequential()
+
+        # First Conv Layer
+        self.model.add(Conv2D(conv1_filters, kernel_size=(3, 3), activation='relu',
+                              input_shape=input_shape, padding='same',
+                              kernel_regularizer=l2(kernel_regularizer)))
+        self.model.add(BatchNormalization()),
+        if self.patch_size > 3:
+            self.model.add(MaxPooling2D((pool_size, pool_size), padding='same'))
+
+        # Second Conv Layer
+        self.model.add(Conv2D(conv2_filters, kernel_size=(3, 3), activation='relu', padding='same',
+                              kernel_regularizer=l2(kernel_regularizer)))
+        self.model.add(BatchNormalization()),
+        self.model.add(MaxPooling2D(pool_size=(pool_size, pool_size)))
+
+        # Third Convolutional Block
+        self.model.add(Conv2D(conv3_filters, (3, 3), activation='relu', padding='same'))
+        self.model.add(BatchNormalization())
+        self.model.add(GlobalAveragePooling2D())  # Reduce feature maps to a vector
+
+        # Fully Connected Layers
+        self.model.add(Dense(dense_units, activation='relu'))
+        if dropout > 0:
+            self.model.add(Dropout(dropout))
+        self.model.add(Dense(int(dense_units/2), activation='relu'))
+        if dropout > 0:
+            self.model.add(Dropout(dropout))
+
+
+        if self.output_neurons > 1:
+            # Output Layer
+            self.model.add(Dense(self.output_neurons, activation='softmax'))
+            optimizer = Adam(learning_rate=1e-4)  # Reduce learning rate
+            self.model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
+        if self.output_neurons == 1:
+            # If binary classification (2 classes: 0 or 1)
+            self.model.add(Dense(1, activation='sigmoid'))  # Change activation
+            optimizer = Adam(learning_rate=1e-4)  # Reduce learning rate
+            self.model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['accuracy'])
+
+        print("CNN Model Created")
+        print(self.model.summary())
+
+        # Show model summary in UI
+        for widget in self.nn_parametrs.winfo_children():
+            widget.destroy()
+
+        self.show_model_summary()
+
     def reset_ui(self):
         """Reset the UI to the initial state for parameter entry."""
         for widget in self.nn_parametrs.winfo_children():
             widget.destroy()
-        self.create_simple_mlp_parameters()  # Or `self.create_cnn_parameters()` depending on the selection
+        # self.create_simple_mlp_parameters()  # Or `self.create_cnn_parameters()` depending on the selection
 
     def start_train_nn(self):
         """Start the training process with progress display."""
@@ -883,12 +1134,27 @@ class App:
         # Define color mapping for predicted classes
         output_neurons = self.output_neurons
         colors = [
+            (256,256,256), # White
             (255, 0, 0),  # Red
             (0, 255, 0),  # Green
             (0, 0, 255),  # Blue
+            (192, 192, 192),  # Silver
+            (128, 128, 128),  # Gray
+            (255, 165, 0),  # Orange
+            (75, 0, 130),  # Indigo
+            (255, 192, 203),  # Pink
             (255, 255, 0),  # Yellow
             (255, 0, 255),  # Magenta
-            (0, 255, 255)  # Cyan
+            (0, 255, 255),  # Cyan
+            (128, 0, 0),  # Dark Red
+            (0, 128, 0),  # Dark Green
+            (0, 0, 128),  # Dark Blue
+            (128, 128, 0),  # Olive
+            (128, 0, 128),  # Purple
+            (0, 128, 128),  # Teal
+            (139, 69, 19),  # Brown
+            (0, 255, 127),  # Spring Green
+            (70, 130, 180)  # Steel Blue
         ]
         colors = colors[:output_neurons]  # Adjust based on the number of classes
 
@@ -905,7 +1171,7 @@ class App:
                 max_value = prediction[y, x, max_value_index]
 
                 # If the highest probability is greater than 0.8, assign the corresponding color
-                if max_value > 0.8:
+                if max_value > 0.1:
                     self.rgb_image[y, x] = colors[max_value_index]
 
         # Display the classified image
@@ -928,6 +1194,141 @@ class App:
                 tk.messagebox.showinfo("Model Saved", f"Model has been saved to:\n{file_path}")
         except Exception as e:
             tk.messagebox.showerror("Error", f"An error occurred during saving:\n{str(e)}")
+
+    def start_train_cnn(self):
+        """Start training the CNN model."""
+
+        if not hasattr(self, "model"):
+            print("CNN model is not created yet!")
+            return
+
+        # Extract training parameters
+        batch_size = int(self.batch_size_value)
+        epochs = int(self.epoch_value)
+
+        # Callbacks (optional): Stop training early if no improvement
+        early_stopping = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True)
+        # model_checkpoint = ModelCheckpoint("best_cnn_model.h5", save_best_only=True, monitor="val_loss")
+
+        # Train CNN
+        print(f"Starting CNN Training: Batch Size={batch_size}, Epochs={epochs}")
+
+        history = self.model.fit(
+            self.train_x, self.train_y,
+            batch_size=batch_size,
+            epochs=epochs,
+            validation_split=0.2,  # Use 20% of data for validation
+            # callbacks=[early_stopping, model_checkpoint]
+            callbacks=early_stopping
+        )
+
+        print("Training complete!")
+
+    def test_cnn(self):
+        """Test the trained CNN model on the entire spectral image."""
+        if self.model is None:
+            tk.messagebox.showerror("Error", "No CNN model is trained yet. Train the model first.")
+            return
+
+        if self.spec_image is None:
+            tk.messagebox.showerror("Error", "No spectral image loaded!")
+            return
+
+        spectral_data = np.array(self.spec_image)  # Shape (height, width, num_bands)
+        print(f"spectral_data.shape: {spectral_data.shape}")
+
+        height, width, num_bands = spectral_data.shape
+
+        # Normalize the spectral data
+        range_value = self.max_value - self.min_value
+        spectral_data = (spectral_data - self.min_value) / (range_value + 1e-10)  # Avoid division by zero
+
+          # Updated to match CNN input
+        pad_size = self.patch_size // 2  # Compute necessary padding
+
+        # Pad the spectral image to ensure all pixels have a valid patch
+        padded_spec_image = np.pad(spectral_data,
+                                   ((pad_size, pad_size), (pad_size, pad_size), (0, 0)),
+                                   mode='reflect')
+
+        cnn_input_data = []
+
+        # Extract 5×5 patches for the entire image
+        for y in range(height):
+            for x in range(width):
+                patch = padded_spec_image[y:y + self.patch_size, x:x + self.patch_size, :]  # Extract 5x5 patch
+
+                if patch.shape == (self.patch_size, self.patch_size, num_bands):  # Ensure uniform shape
+                    cnn_input_data.append(patch)
+
+        cnn_input_data = np.array(cnn_input_data)  # Convert list to array
+        print(f"cnn_input_data.shape: {cnn_input_data.shape}")  # Should be (num_patches, 5, 5, num_bands)
+
+        # Predict the class for each patch
+        predictions = self.model.predict(cnn_input_data, batch_size=32)  # Use batch processing
+        print(f"Testing Results Shape: {predictions.shape}")
+
+
+        colors = np.array([self.hex_to_rgb(color) for (_, _, _, _, color, _) in self.rectangles])
+
+        # Define color mapping
+        output_neurons = self.output_neurons
+        # colors = [
+        #     # (255, 255, 255),  # White
+        #     (255, 0, 0),  # Red
+        #     (0, 255, 0),  # Green
+        #     (0, 0, 255),  # Blue
+        #     (192, 192, 192),  # Silver
+        #     (128, 128, 128),  # Gray
+        #     (255, 165, 0),  # Orange
+        #     (75, 0, 130),  # Indigo
+        #     (255, 192, 203),  # Pink
+        #     (255, 255, 0),  # Yellow
+        #     (255, 0, 255),  # Magenta
+        #     (0, 255, 255),  # Cyan
+        #     (128, 0, 0),  # Dark Red
+        #     (0, 128, 0),  # Dark Green
+        #     (0, 0, 128),  # Dark Blue
+        #     (128, 128, 0),  # Olive
+        #     (128, 0, 128),  # Purple
+        #     (0, 128, 128),  # Teal
+        #     (139, 69, 19),  # Brown
+        #     (0, 255, 127),  # Spring Green
+        #     (70, 130, 180)  # Steel Blue
+        # ]
+        colors = colors[:output_neurons]  # Adjust based on the number of classes
+
+        # Reconstruct the classified image
+        self.rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
+
+        patch_index = 0
+        for y in range(height):
+            for x in range(width):
+                max_value_index = np.argmax(predictions[patch_index])  # Get predicted class
+                max_value = predictions[patch_index][max_value_index]
+
+                # Assign color if confidence is > 0.1
+                if max_value > 0.5:
+                    self.rgb_image[y, x] = colors[max_value_index]
+
+                patch_index += 1
+
+        # Display the classified image
+        self.display_image()
+
+    def save_cnn(self):
+        """Save the trained CNN model to a file."""
+
+        if not hasattr(self, "model"):
+            print("No trained model to save!")
+            return
+
+        # Ask the user where to save the model
+        file_path = filedialog.asksaveasfilename(defaultextension=".h5",
+                                                 filetypes=[("HDF5 files", "*.h5"), ("All files", "*.*")])
+        if file_path:
+            self.model.save(file_path)
+            print(f"Model saved at: {file_path}")
 
 class StopTrainingCallback(tensorflow.keras.callbacks.Callback):
     """Callback to stop training."""
