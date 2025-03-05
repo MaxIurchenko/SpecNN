@@ -1,5 +1,7 @@
 import tkinter as tk
 from tkinter import filedialog, colorchooser, ttk, messagebox
+from unittest.mock import right
+
 import spectral
 import numpy as np
 from PIL import Image, ImageTk, ImageGrab
@@ -7,6 +9,7 @@ from keras.src.utils.module_utils import tensorflow
 from tensorflow.python.keras.saving.saved_model.save_impl import input_layer
 import tensorflow as tf
 from tensorflow import keras
+from tensorflow.keras.callbacks import Callback
 from tensorflow.keras import layers, models, callbacks
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Flatten, BatchNormalization, GlobalAveragePooling2D
@@ -18,13 +21,6 @@ import matplotlib.pyplot as plt
 from tensorflow.python.keras.utils.np_utils import to_categorical
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from tensorflow.python.ops.numpy_ops.np_dtypes import float32
-
-
-# import pandas as pd
-# import cv2
-
-
 
 class App:
     def __init__(self, root):
@@ -36,6 +32,7 @@ class App:
         self.frame.pack(fill=tk.BOTH, expand=True)
         self.frame.grid_rowconfigure(0, weight=0)
         self.frame.grid_rowconfigure(1, weight=1)
+        self.frame.grid_rowconfigure(2, weight=0)
         self.frame.grid_columnconfigure(0, weight=1)
         self.frame.grid_columnconfigure(1, weight=0)
 
@@ -71,10 +68,42 @@ class App:
         # Bind the resize event to the canvas
         self.label_image.bind("<Configure>", self.on_resize)
 
+        # Create a text widget to display the model summary
+        self.summary_label = tk.Label(self.frame, font=("Arial", 12, "bold"), height=10)
+        self.summary_label.grid(row=2, column=0, sticky="sew", padx=0, pady=0)
+        # Create a text box to hold the model summary
+        self.summary_text = tk.Text(self.summary_label, wrap="word", font=("Tahoma", 10), width=250, height=10)
+        self.summary_text.grid(sticky="nsew", padx=0, pady=0)
+
         # Right label with parameters
-        self.right_label = tk.Label(self.frame, width=80)
-        self.right_label.config(justify='left', background='white')
-        self.right_label.grid(row=1, column=1, sticky='ns')
+        self.right_menu_label = tk.Canvas(self.frame, width=285, height=600, background='white')
+        self.scroll_right_label = ttk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.right_menu_label.yview)
+
+        self.scroll_right_label.grid(row=1, column=2,rowspan=2, sticky="nse")
+        self.right_menu_label.grid(row=1, rowspan=2, column=1, sticky="nsew")
+        self.right_menu_label.config(yscrollcommand=self.scroll_right_label.set)
+
+        # **Frame inside Canvas**
+        self.right_label = tk.Frame(self.right_menu_label, background="white")
+        self.window_id = self.right_menu_label.create_window((0, 0), window=self.right_label, anchor="nw")
+
+        # **Function to update scroll region dynamically**
+        def update_scroll_region(event):
+            self.right_menu_label.configure(scrollregion=self.right_menu_label.bbox("all"))
+
+        self.right_label.bind("<Configure>", update_scroll_region)
+
+        # RGB combobox
+        self.red_combo_box = ttk.Combobox(self.right_label, state='readonly')
+        self.green_combo_box = ttk.Combobox(self.right_label, state='readonly')
+        self.blue_combo_box = ttk.Combobox(self.right_label, state='readonly')
+        self.update_bands_button = tk.Button(self.right_label, text='Update\nbands', command=self.rgb_combobox, width=5,
+                                             height=4)
+        self.update_bands_button.grid(row=0, columnspan=2, column=0, sticky='w')
+        self.red_combo_box.grid(row=0, columnspan=2, column=0, sticky='ne')
+        self.green_combo_box.grid(row=0, columnspan=2, column=0, sticky='e')
+        self.blue_combo_box.grid(row=0, columnspan=2, column=0, sticky='se')
+
 
         self.rect_table = ttk.Treeview(self.right_label, columns=("x1", "y1", "x2", "y2", "color", "data"), show="headings")
         self.rect_table.heading("x1", text="X1")
@@ -89,47 +118,46 @@ class App:
         self.rect_table.column("y2", width=50)
         self.rect_table.column("color", width=50)
         self.rect_table.column("data", width=40)
-        self.rect_table.grid(row=0, column=0, sticky='nw')
+        self.rect_table.grid(row=1, column=0, sticky='nw')
 
         # Bind this method to the treeview
         self.rect_table.bind("<Double-1>", self.edit_data_cell)
 
         # Buttons for table actions
         self.delete_button = tk.Button(self.right_label, text="Delete Selected", command=self.delete_rectangle)
-        self.delete_button.grid(row=1, column=0, sticky="nwe")
+        self.delete_button.grid(row=2, column=0, sticky="nwe")
 
         # Button save preparing data MLP
         self.delete_button = tk.Button(self.right_label, text="Save train data MLP", command=self.save_train_data)
-        self.delete_button.grid(row=2, column=0, sticky="nwe")
-
+        self.delete_button.grid(row=3, column=0, sticky="nwe")
 
         self.patch = tk.Label(self.right_label, text="Patch size", font=("Arial", 12))
-        self.patch.grid(row=3, column=0, sticky="w", padx=0, pady=0)
+        self.patch.grid(row=4, column=0, sticky="w", padx=0, pady=0)
         self.patch_value = ttk.Entry(self.right_label, font=("Arial", 12))
-        self.patch_value.grid(row=3, column=0, sticky="nse", padx=0, pady=0)
+        self.patch_value.grid(row=4, column=0, sticky="nse", padx=0, pady=0)
         self.patch_value.delete(0, tk.END)  # Clear any existing value
         self.patch_value.insert(0, str(3))  # Insert the provided default value as a string
         self.patch_value.config(validate="key", validatecommand=(self.root.register(self.validate_int), "%P"))
 
         # Button save preparing data CNN
         self.delete_button = tk.Button(self.right_label, text="Save train data CNN", command=self.save_train_data_cnn)
-        self.delete_button.grid(row=4, column=0, sticky="nwe")
+        self.delete_button.grid(row=5, column=0, sticky="nwe")
 
         # Button save preparing data to file
         self.delete_button = tk.Button(self.right_label, text="Save train data to file", command=self.save_train_data_to_file)
-        self.delete_button.grid(row=5, column=0, sticky="nwe")
+        self.delete_button.grid(row=6, column=0, sticky="nwe")
 
         # Button load preparing data to file
         self.delete_button = tk.Button(self.right_label, text="Load train data", command=self.load_train_data)
-        self.delete_button.grid(row=6, column=0, sticky="nwe")
+        self.delete_button.grid(row=7, column=0, sticky="nwe")
 
         # Button clear preparing data to file
         self.delete_button = tk.Button(self.right_label, text="Clear train data", command=self.clear_train_data)
-        self.delete_button.grid(row=7, column=0, sticky="nwe")
+        self.delete_button.grid(row=8, column=0, sticky="nwe")
 
         # Label to display train_x and train_y shapes
         self.train_shape_label = tk.Label(self.right_label, text="train_x: N/A, train_y: N/A", font=("Arial", 12))
-        self.train_shape_label.grid(row=8, column=0, sticky="nwe")
+        self.train_shape_label.grid(row=9, column=0, sticky="nwe")
 
         # Variables
         self.spec_image = None
@@ -223,10 +251,35 @@ class App:
 
                 rgb_image[:, :, i] = band_data / max_value
 
+            self.red_combo_box.config(values=self.spec_image_info['wavelengths'])
+            self.green_combo_box.config(values=self.spec_image_info['wavelengths'])
+            self.blue_combo_box.config(values=self.spec_image_info['wavelengths'])
+            self.red_combo_box.current(self.spec_image_info['default bands'][0])
+            self.green_combo_box.current(self.spec_image_info['default bands'][1])
+            self.blue_combo_box.current(self.spec_image_info['default bands'][2])
+
             # Scale to 0-255 range and convert to uint8 for display
 
             self.rgb_image = (rgb_image * 255).astype(np.uint8)
             self.display_image()
+
+    def rgb_combobox(self):
+
+        # bands = self.spec_image_info['default bands']
+        bands = [self.red_combo_box.current(), self.green_combo_box.current(), self.blue_combo_box.current()]
+        # print(self.spec_image_info['default bands'])
+        rgb_image = np.zeros((self.spec_image_info["lines"], self.spec_image_info["samples"], 3), dtype=np.float32)
+        for i, band_index in enumerate(bands):
+            band_data = np.squeeze(
+                self.spec_image[:, :, band_index])  # Extract and squeeze band data to ensure 2D shape
+            max_value = np.amax(band_data)  # Get the maximum value for normalization
+
+            # Avoid division by zero
+
+            rgb_image[:, :, i] = band_data / max_value
+
+        self.rgb_image = (rgb_image * 255).astype(np.uint8)
+        self.display_image()
 
     def display_image(self):
         """Resize and display the image with scaled rectangles."""
@@ -789,13 +842,12 @@ class App:
     #----------------------NeuralNetworks------------------------------------
 
     def create_simple_mlp_parameters(self):
-        # Create table headers
         headers = ["Layer", "Configuration"]
-        self.nn_parametrs = tk.Label(self.right_label, font=("Arial", 12, "bold"))
-        self.nn_parametrs.grid(row=9, column=0, sticky="new")
+        self.nn_parameters = tk.Label(self.right_label, font=("Arial", 12, "bold"))
+        self.nn_parameters.grid(row=10, column=0, sticky="new")
 
         for col, header in enumerate(headers):
-            label = tk.Label(self.nn_parametrs, text=header, font=("Arial", 12, "bold"), bg="lightgray")
+            label = tk.Label(self.nn_parameters, text=header, font=("Arial", 12, "bold"), bg="lightgray")
             label.grid(row=1, column=col, sticky="new", padx=2, pady=2)
 
 
@@ -811,17 +863,15 @@ class App:
         self.kernel_regularizer = self.create_table_row(10, "Kernel regularizer", 0.001, input_type="float")
 
         # Add a button to print the configuration
-        submit_btn = tk.Button(self.nn_parametrs, text="Submit", command=self.make_nn_model, font=("Arial", 12))
+        submit_btn = tk.Button(self.nn_parameters, text="Submit", command=self.make_nn_model, font=("Arial", 12))
         submit_btn.grid(row=11, column=0, columnspan=2, pady=10)
 
         self.start_train = tk.Button(self.right_label, text="Start train", command=self.start_train_nn)
         self.start_train.grid(row=14, column=0, sticky="new")
-        self.stop_train = tk.Button(self.right_label, text="Stop train", command=self.stop_train_nn)
-        self.stop_train.grid(row=15, column=0, sticky="new")
         self.test = tk.Button(self.right_label, text="Test", command=self.test_nn)
         self.test.grid(row=16, column=0, sticky="new")
-        self.save_nn = tk.Button(self.right_label, text="Save", command=self.save_nn)
-        self.save_nn.grid(row=17, column=0, sticky="new")
+        self.save = tk.Button(self.right_label, text="Save", command=self.save_nn)
+        self.save.grid(row=17, column=0, sticky="new")
 
     def validate_int(self, value):
         """
@@ -833,16 +883,16 @@ class App:
 
     def create_table_row(self, row, label_text, default_value, input_type=None, readonly=False):
         """Helper function to create a row in the table."""
-        label = tk.Label(self.nn_parametrs, text=label_text, font=("Arial", 12))
+        label = tk.Label(self.nn_parameters, text=label_text, font=("Arial", 12))
         label.grid(row=row, column=0, sticky="w", padx=0, pady=0)
 
         if readonly:
             # Create a label for readonly fields
-            entry = tk.Label(self.nn_parametrs, text=default_value, font=("Arial", 12), bg="white", relief="solid")
+            entry = tk.Label(self.nn_parameters, text=default_value, font=("Arial", 12), bg="white", relief="solid")
             entry.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
         else:
             # Create an entry for user input
-            entry = ttk.Entry(self.nn_parametrs, font=("Arial", 12))
+            entry = ttk.Entry(self.nn_parameters, font=("Arial", 12))
             entry.grid(row=row, column=1, sticky="nsew", padx=0, pady=0)
 
             # Insert the actual default value
@@ -893,42 +943,40 @@ class App:
         print(self.model.summary())
 
         # Clean up previous widgets and show model summary
-        for widget in self.nn_parametrs.winfo_children():
+        for widget in self.nn_parameters.winfo_children():
             widget.destroy()
+        self.nn_parameters.destroy()
 
         self.show_model_summary()
 
+        # Optionally, add a button to reset the UI
+        self.reset_btn = tk.Button(self.right_label, text="Reset NN", command=self.reset_ui, font=("Arial", 12))
+        self.reset_btn.grid(row=10, sticky="ew")
+
     def show_model_summary(self):
         """Display the model's summary after it's created."""
-        # Create a text widget to display the model summary
-        summary_label = tk.Label(self.nn_parametrs, text="Model Summary", font=("Arial", 12, "bold"))
-        summary_label.grid(row=9, column=0, sticky="nsew", padx=0, pady=0)
+        # Clear previous content and insert new model summary
+        self.summary_text.delete("1.0", tk.END)
+        if self.model:
+            from io import StringIO
+            import sys
 
-        # Create a text box to hold the model summary
-        summary_text = tk.Text(self.nn_parametrs, wrap="word", font=("Courier", 10), width=45, height=30)
-        summary_text.grid(sticky="nsew", padx=0, pady=0)
-
-        # Fetch model summary and insert it into the text box
-        from io import StringIO
-        summary_buffer = StringIO()
-        self.model.summary(print_fn=lambda x: summary_buffer.write(x + "\n"))
-        summary_text.insert("1.0", summary_buffer.getvalue())
-        summary_text.configure(state="disabled")  # Make the text box read-only
-
-        # Optionally, add a button to reset the UI
-        reset_btn = tk.Button(self.nn_parametrs, text="Reset", command=self.reset_ui, font=("Arial", 12))
-        reset_btn.grid(row=1, pady=10, sticky="ns")
+            buffer = StringIO()
+            sys.stdout = buffer  # Redirect stdout to buffer
+            self.model.summary()  # Print model summary
+            sys.stdout = sys.__stdout__  # Reset stdout
+            model_summary = buffer.getvalue()
+            self.summary_text.insert(tk.END, model_summary)
 
     def create_cnn_parameters(self):
-        """Create UI elements for CNN model configuration."""
 
         # Create table headers
         headers = ["Layer", "Configuration"]
-        self.nn_parametrs = tk.Label(self.right_label, font=("Arial", 12, "bold"))
-        self.nn_parametrs.grid(row=9, column=0, sticky="new")
+        self.nn_parameters = tk.Label(self.right_label, font=("Arial", 12, "bold"))
+        self.nn_parameters.grid(row=10, column=0, sticky="new")
 
         for col, header in enumerate(headers):
-            label = tk.Label(self.nn_parametrs, text=header, font=("Arial", 12, "bold"), bg="lightgray")
+            label = tk.Label(self.nn_parameters, text=header, font=("Arial", 12, "bold"), bg="lightgray")
             label.grid(row=1, column=col, sticky="new", padx=2, pady=2)
 
         # Create CNN parameter input fields
@@ -946,7 +994,7 @@ class App:
         self.kernel_regularizer = self.create_table_row(12, "Kernel Regularizer", 0.001, input_type="float")
 
         # Submit button
-        submit_btn = tk.Button(self.nn_parametrs, text="Submit", command=self.make_cnn_model, font=("Arial", 12))
+        submit_btn = tk.Button(self.nn_parameters, text="Submit", command=self.make_cnn_model, font=("Arial", 12))
         submit_btn.grid(row=13, column=0, columnspan=2, pady=10)
 
         # Training buttons
@@ -954,8 +1002,8 @@ class App:
         self.start_train.grid(row=14, column=0, sticky="new")
         self.test = tk.Button(self.right_label, text="Test", command=self.test_cnn)
         self.test.grid(row=16, column=0, sticky="new")
-        self.save_cnn = tk.Button(self.right_label, text="Save", command=self.save_cnn)
-        self.save_cnn.grid(row=17, column=0, sticky="new")
+        self.save = tk.Button(self.right_label, text="Save", command=self.save_cnn)
+        self.save.grid(row=17, column=0, sticky="new")
 
     def make_cnn_model(self):
         """Create CNN model based on user-defined parameters."""
@@ -1019,16 +1067,22 @@ class App:
         print(self.model.summary())
 
         # Show model summary in UI
-        for widget in self.nn_parametrs.winfo_children():
+        for widget in self.nn_parameters.winfo_children():
             widget.destroy()
 
+        self.nn_parameters.destroy()
         self.show_model_summary()
+
+        # Optionally, add a button to reset the UI
+        self.reset_btn = tk.Button(self.right_label, text="Reset NN", command=self.reset_ui, font=("Arial", 12))
+        self.reset_btn.grid(row=10, sticky="we")
 
     def reset_ui(self):
         """Reset the UI to the initial state for parameter entry."""
-        for widget in self.nn_parametrs.winfo_children():
-            widget.destroy()
-        # self.create_simple_mlp_parameters()  # Or `self.create_cnn_parameters()` depending on the selection
+        self.reset_btn.destroy()
+        self.start_train.destroy()
+        self.test.destroy()
+        self.save.destroy()
 
     def start_train_nn(self):
         """Start the training process with progress display."""
@@ -1038,15 +1092,15 @@ class App:
             return
 
         # Create a new window to display training progress
-        progress_window = tk.Toplevel(self.nn_parametrs)
+        progress_window = tk.Toplevel(self.nn_parameters)
         progress_window.title("Training Progress")
 
         # Create a text widget for progress logs
         text_widget = tk.Text(progress_window, wrap="word", font=("Courier", 10), width=60, height=15)
         text_widget.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Initialize the callback for training progress
-        progress_callback = TrainingProgressCallback(text_widget)
+        # Create a training progress callback that writes to summary_text
+        progress_callback = TrainingProgressCallback(self.summary_text)
 
         self.train_x, val_x, self.train_y, val_y = train_test_split(self.train_x, self.train_y, test_size=0.2,
                                                                     random_state=42)
@@ -1071,7 +1125,7 @@ class App:
 
     def plot_training_loss(self, loss_history):
         """Plot the training loss history in a new window."""
-        plot_window = tk.Toplevel(self.nn_parametrs)
+        plot_window = tk.Toplevel(self.nn_parameters)
         plot_window.title("Training Loss")
 
         # Create a Matplotlib figure
@@ -1084,7 +1138,7 @@ class App:
 
 
         # Display the plot in a tkinter canvas
-        canvas = tk.Canvas(plot_window, width=300, height=300)
+        canvas = tk.Canvas(plot_window, width=300, height=70)
         canvas.pack(fill="both", expand=True)
 
         # Embed the Matplotlib figure in the Tkinter canvas
@@ -1093,16 +1147,8 @@ class App:
         figure_canvas.get_tk_widget().pack(fill="both", expand=True)
         figure_canvas.draw()
 
-    def stop_train_nn(self):
-        """Stop the training process."""
-        if hasattr(self, 'stop_training_callback'):
-            self.stop_training_callback.stop = True
-            tk.messagebox.showinfo("Training Stopped", "Training has been stopped.")
-        else:
-            tk.messagebox.showerror("Error", "Training cannot be stopped because it hasn't started yet.")
-
     def test_nn(self):
-        """Test the trained neural network on the entire spectral image."""
+        """Test the trained neural network on the entire spectral image with a progress bar."""
         if self.model is None:
             tk.messagebox.showerror("Error", "No model is trained yet. Train the model first.")
             return
@@ -1120,6 +1166,20 @@ class App:
         range_value = self.max_value - self.min_value
         flattened_spectral_data = (flattened_spectral_data - self.min_value) / (range_value + 1e-10)
 
+        # Create a new window for progress tracking
+        progress_window = tk.Toplevel(self.nn_parameters)
+        progress_window.title("Testing Progress")
+
+        # Progress bar
+        progress_label = tk.Label(progress_window, text="Processing image...", font=("Arial", 10))
+        progress_label.pack(pady=5)
+
+        progress_bar = ttk.Progressbar(progress_window, length=400, mode='determinate')
+        progress_bar.pack(pady=10)
+
+        # Set progress bar range
+        progress_bar["maximum"] = height  # Each row processed updates the bar
+
         # Predict the class for each pixel
         prediction = self.model.predict(flattened_spectral_data)  # Shape: (total_pixels, num_classes)
         print(f"Testing Results Shape: {prediction.shape}")
@@ -1131,51 +1191,33 @@ class App:
             print(f"Error: Expected {expected_size} predictions, but got {prediction.shape[0]}")
             return
 
-        # Define color mapping for predicted classes
-        output_neurons = self.output_neurons
-        colors = [
-            (256,256,256), # White
-            (255, 0, 0),  # Red
-            (0, 255, 0),  # Green
-            (0, 0, 255),  # Blue
-            (192, 192, 192),  # Silver
-            (128, 128, 128),  # Gray
-            (255, 165, 0),  # Orange
-            (75, 0, 130),  # Indigo
-            (255, 192, 203),  # Pink
-            (255, 255, 0),  # Yellow
-            (255, 0, 255),  # Magenta
-            (0, 255, 255),  # Cyan
-            (128, 0, 0),  # Dark Red
-            (0, 128, 0),  # Dark Green
-            (0, 0, 128),  # Dark Blue
-            (128, 128, 0),  # Olive
-            (128, 0, 128),  # Purple
-            (0, 128, 128),  # Teal
-            (139, 69, 19),  # Brown
-            (0, 255, 127),  # Spring Green
-            (70, 130, 180)  # Steel Blue
-        ]
-        colors = colors[:output_neurons]  # Adjust based on the number of classes
+        colors = np.array([self.hex_to_rgb(color) for (_, _, _, _, color, _) in self.rectangles])
+        colors = colors[:self.output_neurons]  # Adjust based on the number of classes
 
         # Reshape prediction back to (height, width, num_classes)
-        prediction = prediction.reshape(height, width, output_neurons)
+        prediction = prediction.reshape(height, width, self.output_neurons)
 
-        # Create an RGB image for visualization
-        # self.rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
-
+        # Process each row and update progress bar
         for y in range(height):
             for x in range(width):
                 # Find the predicted class with the highest probability
                 max_value_index = np.argmax(prediction[y, x])
                 max_value = prediction[y, x, max_value_index]
 
-                # If the highest probability is greater than 0.8, assign the corresponding color
+                # If confidence is high enough, assign color
                 if max_value > 0.1:
                     self.rgb_image[y, x] = colors[max_value_index]
 
+            # Update progress bar
+            progress_bar["value"] = y
+            progress_window.update_idletasks()  # Force UI update
+
+        # Close progress window after completion
+        progress_window.destroy()
+
         # Display the classified image
         self.display_image()
+        tk.messagebox.showinfo("Testing Complete", "Testing process finished successfully!")
 
     def save_nn(self):
         """Save the trained model to disk."""
@@ -1210,6 +1252,9 @@ class App:
         early_stopping = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True)
         # model_checkpoint = ModelCheckpoint("best_cnn_model.h5", save_best_only=True, monitor="val_loss")
 
+        # Create a training progress callback that writes to summary_text
+        progress_callback = TrainingProgressCallback(self.summary_text)
+
         # Train CNN
         print(f"Starting CNN Training: Batch Size={batch_size}, Epochs={epochs}")
 
@@ -1219,13 +1264,13 @@ class App:
             epochs=epochs,
             validation_split=0.2,  # Use 20% of data for validation
             # callbacks=[early_stopping, model_checkpoint]
-            callbacks=early_stopping
+            callbacks=[early_stopping, progress_callback]
         )
 
         print("Training complete!")
 
     def test_cnn(self):
-        """Test the trained CNN model on the entire spectral image."""
+        """Test the trained CNN model on the entire spectral image with a progress bar."""
         if self.model is None:
             tk.messagebox.showerror("Error", "No CNN model is trained yet. Train the model first.")
             return
@@ -1243,23 +1288,41 @@ class App:
         range_value = self.max_value - self.min_value
         spectral_data = (spectral_data - self.min_value) / (range_value + 1e-10)  # Avoid division by zero
 
-          # Updated to match CNN input
-        pad_size = self.patch_size // 2  # Compute necessary padding
+        # Compute padding size
+        pad_size = self.patch_size // 2
 
-        # Pad the spectral image to ensure all pixels have a valid patch
+        # Pad the spectral image for patch extraction
         padded_spec_image = np.pad(spectral_data,
                                    ((pad_size, pad_size), (pad_size, pad_size), (0, 0)),
                                    mode='reflect')
 
         cnn_input_data = []
+        total_patches = height * width  # Total number of patches
 
-        # Extract 5×5 patches for the entire image
+        # Create a new window for progress tracking
+        progress_window = tk.Toplevel(self.nn_parameters)
+        progress_window.title("Testing Progress")
+
+        # Progress bar UI
+        progress_label = tk.Label(progress_window, text="Processing image patches...", font=("Arial", 10))
+        progress_label.pack(pady=5)
+
+        progress_bar = ttk.Progressbar(progress_window, length=400, mode='determinate')
+        progress_bar.pack(pady=10)
+        progress_bar["maximum"] = total_patches  # Maximum progress value
+
+        # Extract 5×5 patches
+        patch_count = 0
         for y in range(height):
             for x in range(width):
-                patch = padded_spec_image[y:y + self.patch_size, x:x + self.patch_size, :]  # Extract 5x5 patch
-
-                if patch.shape == (self.patch_size, self.patch_size, num_bands):  # Ensure uniform shape
+                patch = padded_spec_image[y:y + self.patch_size, x:x + self.patch_size, :]
+                if patch.shape == (self.patch_size, self.patch_size, num_bands):
                     cnn_input_data.append(patch)
+
+                # Update progress bar
+                patch_count += 1
+                progress_bar["value"] = patch_count
+                progress_window.update_idletasks()  # Keep UI responsive
 
         cnn_input_data = np.array(cnn_input_data)  # Convert list to array
         print(f"cnn_input_data.shape: {cnn_input_data.shape}")  # Should be (num_patches, 5, 5, num_bands)
@@ -1268,35 +1331,9 @@ class App:
         predictions = self.model.predict(cnn_input_data, batch_size=32)  # Use batch processing
         print(f"Testing Results Shape: {predictions.shape}")
 
-
+        # Get color mappings
         colors = np.array([self.hex_to_rgb(color) for (_, _, _, _, color, _) in self.rectangles])
-
-        # Define color mapping
-        output_neurons = self.output_neurons
-        # colors = [
-        #     # (255, 255, 255),  # White
-        #     (255, 0, 0),  # Red
-        #     (0, 255, 0),  # Green
-        #     (0, 0, 255),  # Blue
-        #     (192, 192, 192),  # Silver
-        #     (128, 128, 128),  # Gray
-        #     (255, 165, 0),  # Orange
-        #     (75, 0, 130),  # Indigo
-        #     (255, 192, 203),  # Pink
-        #     (255, 255, 0),  # Yellow
-        #     (255, 0, 255),  # Magenta
-        #     (0, 255, 255),  # Cyan
-        #     (128, 0, 0),  # Dark Red
-        #     (0, 128, 0),  # Dark Green
-        #     (0, 0, 128),  # Dark Blue
-        #     (128, 128, 0),  # Olive
-        #     (128, 0, 128),  # Purple
-        #     (0, 128, 128),  # Teal
-        #     (139, 69, 19),  # Brown
-        #     (0, 255, 127),  # Spring Green
-        #     (70, 130, 180)  # Steel Blue
-        # ]
-        colors = colors[:output_neurons]  # Adjust based on the number of classes
+        colors = colors[:self.output_neurons]  # Adjust based on the number of classes
 
         # Reconstruct the classified image
         self.rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
@@ -1308,13 +1345,21 @@ class App:
                 max_value = predictions[patch_index][max_value_index]
 
                 # Assign color if confidence is > 0.1
-                if max_value > 0.5:
+                if max_value > 0.1:
                     self.rgb_image[y, x] = colors[max_value_index]
 
                 patch_index += 1
 
+                # Update progress bar
+                progress_bar["value"] = patch_index
+                progress_window.update_idletasks()  # Refresh UI
+
+        # Close progress window when done
+        progress_window.destroy()
+
         # Display the classified image
         self.display_image()
+        tk.messagebox.showinfo("Testing Complete", "CNN Testing process finished successfully!")
 
     def save_cnn(self):
         """Save the trained CNN model to a file."""
@@ -1340,17 +1385,22 @@ class StopTrainingCallback(tensorflow.keras.callbacks.Callback):
         if self.stop:
             self.model.stop_training = True
 
-class TrainingProgressCallback(tf.keras.callbacks.Callback):
-    """Callback to log progress after each epoch."""
+class TrainingProgressCallback(Callback):
     def __init__(self, text_widget):
         super().__init__()
         self.text_widget = text_widget
 
     def on_epoch_end(self, epoch, logs=None):
-        # Append training logs to the text widget
-        message = f"Epoch {epoch + 1}, Loss: {logs['loss']:.4f}, Accuracy: {logs.get('accuracy', 0):.4f}\n"
-        self.text_widget.insert("end", message)
-        self.text_widget.see("end")  # Scroll to the latest log
+        if logs is None:
+            logs = {}
+        log_message = f"Epoch {epoch + 1}: Loss={logs.get('loss', 0):.4f}, Accuracy={logs.get('accuracy', 0):.4f}, Val_Loss={logs.get('val_loss', 0):.4f}, Val_Accuracy={logs.get('val_accuracy', 0):.4f}\n"
+
+        # Append text to summary_text widget
+        self.text_widget.insert(tk.END, log_message)
+        self.text_widget.see(tk.END)  # Auto-scroll to the bottom
+
+        # Force Tkinter update
+        self.text_widget.update_idletasks()
 
 if __name__ == "__main__":
     root = tk.Tk()
