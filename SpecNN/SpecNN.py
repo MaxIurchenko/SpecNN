@@ -179,6 +179,7 @@ class App:
         self.min_value = None
         self.dataset = None
         self.patch_size = 5
+        self.accuracy = 0.5
 
         # Rectangle
         self.label_image.bind("<ButtonPress-1>", self.start_draw)
@@ -869,6 +870,14 @@ class App:
         self.start_train = tk.Button(self.right_label, text="Start train", command=self.start_train_nn)
         self.start_train.grid(row=14, column=0, sticky="new")
         self.test = tk.Button(self.right_label, text="Test", command=self.test_nn)
+        self.test_accuracy = tk.Label(self.right_label, text="Test accuracy", font=("Arial", 12))
+        self.test_accuracy.grid(row=15, column=0, sticky="w", padx=0, pady=0)
+        self.test_accuracy_value = ttk.Entry(self.right_label, font=("Arial", 12))
+        self.test_accuracy_value.grid(row=15, column=0, sticky="nse", padx=0, pady=0)
+        self.test_accuracy_value.delete(0, tk.END)  # Clear any existing value
+        self.test_accuracy_value.insert(0, str(0.5))  # Insert the provided default value as a string
+        self.test_accuracy_value.config(validate="key", validatecommand=(self.root.register(self.validate_float), "%P"))
+
         self.test.grid(row=16, column=0, sticky="new")
         self.save = tk.Button(self.right_label, text="Save", command=self.save_nn)
         self.save.grid(row=17, column=0, sticky="new")
@@ -880,6 +889,16 @@ class App:
         :return: True if valid, False otherwise.
         """
         return value.isdigit() or value == ""
+
+    def validate_float(self, new_value):
+        """Allow only valid float input (including empty string)."""
+        if new_value == "":  # Allow empty input
+            return True
+        try:
+            float(new_value)  # Check if it's a valid float
+            return True
+        except ValueError:
+            return False
 
     def create_table_row(self, row, label_text, default_value, input_type=None, readonly=False):
         """Helper function to create a row in the table."""
@@ -1000,6 +1019,14 @@ class App:
         # Training buttons
         self.start_train = tk.Button(self.right_label, text="Start Train", command=self.start_train_cnn)
         self.start_train.grid(row=14, column=0, sticky="new")
+        self.test_accuracy = tk.Label(self.right_label, text="Test accuracy", font=("Arial", 12))
+        self.test_accuracy.grid(row=15, column=0, sticky="w", padx=0, pady=0)
+        self.test_accuracy_value = ttk.Entry(self.right_label, font=("Arial", 12))
+        self.test_accuracy_value.grid(row=15, column=0, sticky="nse", padx=0, pady=0)
+        self.test_accuracy_value.delete(0, tk.END)  # Clear any existing value
+        self.test_accuracy_value.insert(0, str(0.5))  # Insert the provided default value as a string
+        self.test_accuracy_value.config(validate="key", validatecommand=(self.root.register(self.validate_float), "%P"))
+
         self.test = tk.Button(self.right_label, text="Test", command=self.test_cnn)
         self.test.grid(row=16, column=0, sticky="new")
         self.save = tk.Button(self.right_label, text="Save", command=self.save_cnn)
@@ -1083,6 +1110,8 @@ class App:
         self.start_train.destroy()
         self.test.destroy()
         self.save.destroy()
+        self.test_accuracy_value.destroy()
+        self.test_accuracy.destroy()
 
     def start_train_nn(self):
         """Start the training process with progress display."""
@@ -1090,14 +1119,6 @@ class App:
         if self.model is None:
             tk.messagebox.showerror("Error", "No model is initialized. Please build a model first.")
             return
-
-        # Create a new window to display training progress
-        progress_window = tk.Toplevel(self.nn_parameters)
-        progress_window.title("Training Progress")
-
-        # Create a text widget for progress logs
-        text_widget = tk.Text(progress_window, wrap="word", font=("Courier", 10), width=60, height=15)
-        text_widget.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Create a training progress callback that writes to summary_text
         progress_callback = TrainingProgressCallback(self.summary_text)
@@ -1120,33 +1141,6 @@ class App:
         # Notify training completion
         tk.messagebox.showinfo("Training Complete", "The training process has been completed.")
 
-        # Plot loss after training
-        self.plot_training_loss(history.history['loss'])
-
-    def plot_training_loss(self, loss_history):
-        """Plot the training loss history in a new window."""
-        plot_window = tk.Toplevel(self.nn_parameters)
-        plot_window.title("Training Loss")
-
-        # Create a Matplotlib figure
-        fig, ax = plt.subplots()
-        ax.plot(loss_history, label="Training Loss", color="blue")
-        ax.set_title("Training Loss Over Epochs")
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel("Loss")
-        ax.legend()
-
-
-        # Display the plot in a tkinter canvas
-        canvas = tk.Canvas(plot_window, width=300, height=70)
-        canvas.pack(fill="both", expand=True)
-
-        # Embed the Matplotlib figure in the Tkinter canvas
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-        figure_canvas = FigureCanvasTkAgg(fig, plot_window)
-        figure_canvas.get_tk_widget().pack(fill="both", expand=True)
-        figure_canvas.draw()
-
     def test_nn(self):
         """Test the trained neural network on the entire spectral image with a progress bar."""
         if self.model is None:
@@ -1167,7 +1161,7 @@ class App:
         flattened_spectral_data = (flattened_spectral_data - self.min_value) / (range_value + 1e-10)
 
         # Create a new window for progress tracking
-        progress_window = tk.Toplevel(self.nn_parameters)
+        progress_window = tk.Toplevel(self.summary_label)
         progress_window.title("Testing Progress")
 
         # Progress bar
@@ -1197,6 +1191,9 @@ class App:
         # Reshape prediction back to (height, width, num_classes)
         prediction = prediction.reshape(height, width, self.output_neurons)
 
+        self.accuracy = float(self.test_accuracy_value.get())
+        print(f"accuracy:{self.accuracy}")
+
         # Process each row and update progress bar
         for y in range(height):
             for x in range(width):
@@ -1205,7 +1202,7 @@ class App:
                 max_value = prediction[y, x, max_value_index]
 
                 # If confidence is high enough, assign color
-                if max_value > 0.1:
+                if max_value > self.accuracy:
                     self.rgb_image[y, x] = colors[max_value_index]
 
             # Update progress bar
@@ -1300,7 +1297,7 @@ class App:
         total_patches = height * width  # Total number of patches
 
         # Create a new window for progress tracking
-        progress_window = tk.Toplevel(self.nn_parameters)
+        progress_window = tk.Toplevel(self.summary_label)
         progress_window.title("Testing Progress")
 
         # Progress bar UI
@@ -1336,7 +1333,8 @@ class App:
         colors = colors[:self.output_neurons]  # Adjust based on the number of classes
 
         # Reconstruct the classified image
-        self.rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
+        # self.rgb_image = np.zeros((height, width, 3), dtype=np.uint8)
+        self.accuracy = float(self.test_accuracy_value.get())
 
         patch_index = 0
         for y in range(height):
@@ -1345,7 +1343,7 @@ class App:
                 max_value = predictions[patch_index][max_value_index]
 
                 # Assign color if confidence is > 0.1
-                if max_value > 0.1:
+                if max_value > self.accuracy :
                     self.rgb_image[y, x] = colors[max_value_index]
 
                 patch_index += 1
@@ -1404,6 +1402,6 @@ class TrainingProgressCallback(Callback):
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.geometry('1200x800')
+    root.geometry('1400x1000')
     app = App(root)
     root.mainloop()
