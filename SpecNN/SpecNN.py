@@ -1,26 +1,19 @@
 import tkinter as tk
 from tkinter import filedialog, colorchooser, ttk, messagebox
-from unittest.mock import right
 
 import spectral
 import numpy as np
 from PIL import Image, ImageTk, ImageGrab
 from keras.src.utils.module_utils import tensorflow
-from tensorflow.python.keras.saving.saved_model.save_impl import input_layer
-import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.callbacks import Callback
-from tensorflow.keras import layers, models, callbacks
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, Conv2D, MaxPooling2D, Flatten, BatchNormalization, GlobalAveragePooling2D
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
-import tensorflow.keras.utils as keras_utils
-from tensorflow.keras.regularizers import l2
 from tensorflow.keras.optimizers import Adam
-import matplotlib.pyplot as plt
 from tensorflow.python.keras.utils.np_utils import to_categorical
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import LabelEncoder
 
 class App:
     def __init__(self, root):
@@ -861,7 +854,7 @@ class App:
         self.epoch = self.create_table_row(7, "Epoch", 20, input_type="int")
         self.batch_size = self.create_table_row(8, "Batch size", 32, input_type="int")
         self.dropout = self.create_table_row(9, "Dropout", 0.5, input_type="float")
-        self.kernel_regularizer = self.create_table_row(10, "Kernel regularizer", 0.001, input_type="float")
+        # self.kernel_regularizer = self.create_table_row(10, "Kernel regularizer", 0.001, input_type="float")
 
         # Add a button to print the configuration
         submit_btn = tk.Button(self.nn_parameters, text="Submit", command=self.make_nn_model, font=("Arial", 12))
@@ -935,19 +928,19 @@ class App:
         second_hidden = int(self.second_hidden_layer.get())
         third_hidden = int(self.therd_hidden_layer.get())
         dropout = float(self.dropout.get())
-        kernel_regularizer = float(self.kernel_regularizer.get())
-        print(dropout, kernel_regularizer)
+        # kernel_regularizer = float(self.kernel_regularizer.get())
+        # print(dropout, kernel_regularizer)
 
         self.model = keras.Sequential()
-        self.model.add(Dense(first_hidden, input_dim=input_shape, activation='relu', kernel_regularizer=l2(kernel_regularizer)))
+        self.model.add(Dense(first_hidden, input_dim=input_shape, activation='relu'))
         if dropout > 0:
             self.model.add(Dropout(dropout))
         if second_hidden > 0:
-            self.model.add(Dense(second_hidden, activation='relu', kernel_regularizer=l2(kernel_regularizer)))
+            self.model.add(Dense(second_hidden, activation='relu'))
             if dropout > 0:
                 self.model.add(Dropout(dropout))
         if third_hidden > 0:
-            self.model.add(Dense(third_hidden, activation='relu', kernel_regularizer=l2(kernel_regularizer)))
+            self.model.add(Dense(third_hidden, activation='relu'))
             if dropout > 0:
                 self.model.add(Dropout(dropout))
 
@@ -1010,7 +1003,7 @@ class App:
         self.epochs = self.create_table_row(9, "Epochs", 20, input_type="int")
         self.batch_size = self.create_table_row(10, "Batch Size", 32, input_type="int")
         self.dropout = self.create_table_row(11, "Dropout", 0.5, input_type="float")
-        self.kernel_regularizer = self.create_table_row(12, "Kernel Regularizer", 0.001, input_type="float")
+        # self.kernel_regularizer = self.create_table_row(12, "Kernel Regularizer", 0.001, input_type="float")
 
         # Submit button
         submit_btn = tk.Button(self.nn_parameters, text="Submit", command=self.make_cnn_model, font=("Arial", 12))
@@ -1046,22 +1039,20 @@ class App:
         pool_size = int(self.pool_size.get())
         dense_units = int(self.dense_units.get())
         dropout = float(self.dropout.get())
-        kernel_regularizer = float(self.kernel_regularizer.get())
+        # kernel_regularizer = float(self.kernel_regularizer.get())
 
         # Build CNN model
         self.model = Sequential()
 
         # First Conv Layer
         self.model.add(Conv2D(conv1_filters, kernel_size=(3, 3), activation='relu',
-                              input_shape=input_shape, padding='same',
-                              kernel_regularizer=l2(kernel_regularizer)))
+                              input_shape=input_shape, padding='same'))
         self.model.add(BatchNormalization()),
         if self.patch_size > 3:
             self.model.add(MaxPooling2D((pool_size, pool_size), padding='same'))
 
         # Second Conv Layer
-        self.model.add(Conv2D(conv2_filters, kernel_size=(3, 3), activation='relu', padding='same',
-                              kernel_regularizer=l2(kernel_regularizer)))
+        self.model.add(Conv2D(conv2_filters, kernel_size=(3, 3), activation='relu', padding='same'))
         self.model.add(BatchNormalization()),
         self.model.add(MaxPooling2D(pool_size=(pool_size, pool_size)))
 
